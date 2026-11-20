@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHORILAB · Tarjetas de regalo</title>
+<style>
+:root{--ink:#17171a;--bg:#f5f1e8;--paper:#fff;--celeste:#75aadb;--celeste-d:#3f7fb8;--gold:#f6b40e;--red:#c8102e;--black:#111;--ok:#1f8a4c;--muted:#6b6b72;--line:#e4dfd2;--r:14px}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45}
+button,input,select,textarea{font:inherit}
+.flag{height:8px;background:linear-gradient(90deg,var(--black) 0 20%,var(--red) 20% 40%,var(--gold) 40% 60%,#fff 60% 70%,var(--celeste) 70% 85%,#fff 85% 90%,var(--celeste) 90%)}
+header.top{background:var(--black);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:12px 18px;gap:10px;flex-wrap:wrap}
+header.top .brand{font-weight:800;letter-spacing:.06em}
+header.top .brand small{display:block;font-weight:500;letter-spacing:0;color:#bbb;font-size:12px}
+header.top .who{display:flex;align-items:center;gap:10px;font-size:14px}
+main{max-width:1000px;margin:0 auto;padding:18px}
+h2{margin:.2em 0 .6em;font-size:20px}h3{margin:.2em 0}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.stat{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.stat b{display:block;font-size:22px}.stat span{color:var(--muted);font-size:13px}
+.btn{border:0;border-radius:10px;padding:9px 14px;cursor:pointer;font-weight:600;background:var(--black);color:#fff}
+.btn:hover{opacity:.88}
+.btn.cel{background:var(--celeste-d)}.btn.gold{background:var(--gold);color:#222}.btn.red{background:var(--red)}.btn.ok{background:var(--ok)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.sm{padding:5px 9px;font-size:13px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.tabs button{border:1px solid var(--line);background:var(--paper);padding:8px 14px;border-radius:999px;cursor:pointer;font-weight:600}
+.tabs button.on{background:var(--black);color:#fff;border-color:var(--black)}
+label{display:block;font-size:13px;font-weight:600;margin:10px 0 4px}
+input,select,textarea{width:100%;padding:9px 10px;border:1px solid #cfc9ba;border-radius:9px;background:#fff}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--celeste);border-color:var(--celeste)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}.row>*{flex:1 1 150px}
+.row .fit{flex:0 0 auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.tw{overflow-x:auto}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700}
+.b-pendiente{background:#fff1c9;color:#7a5600}.b-confirmada{background:#d7f3e1;color:#146534}
+.b-rechazada,.b-anulada{background:#f6d6db;color:#8f0c20}
+.b-recharge{background:#dcebf8;color:#235a8a}.b-use{background:#ececec;color:#333}
+.pos{color:var(--ok);font-weight:700}.neg{color:var(--red);font-weight:700}
+.muted{color:var(--muted);font-size:13px}
+.empty{padding:18px;text-align:center;color:var(--muted)}
+/* tarjeta */
+.gcard{position:relative;border-radius:18px;padding:20px 22px 18px 34px;color:#fff;max-width:420px;min-height:210px;background:radial-gradient(circle at 85% 15%,rgba(246,180,14,.35),transparent 40%),linear-gradient(135deg,#161619,#2b2b31);overflow:hidden;box-shadow:0 10px 26px rgba(0,0,0,.25)}
+.gcard:before{content:"";position:absolute;left:0;top:0;bottom:0;width:12px;background:linear-gradient(var(--black) 0 20%,var(--red) 20% 40%,var(--gold) 40% 60%,var(--celeste) 60% 80%,#fff 80%)}
+.gcard .t{display:flex;justify-content:space-between;align-items:baseline}
+.gcard .t b{letter-spacing:.12em}.gcard .t span{font-size:12px;color:#ccc}
+.gcard .bal{font-size:34px;font-weight:800;margin:28px 0 6px}
+.gcard .lbl{font-size:11px;color:#bbb;text-transform:uppercase;letter-spacing:.08em}
+.gcard .num{font-family:ui-monospace,Menlo,monospace;letter-spacing:.14em;margin-top:14px}
+.gcard .nm{margin-top:4px;color:#e6e6e6}
+/* login */
+.login{max-width:420px;margin:30px auto}
+.login .tabs{justify-content:center}
+.hint{background:#eef5fb;border:1px solid #cfe2f3;border-radius:10px;padding:9px 11px;font-size:13px;margin-top:12px}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:20}
+.md{background:#fff;border-radius:16px;max-width:560px;width:100%;padding:18px;margin:auto}
+.mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.x{border:0;background:transparent;font-size:18px;cursor:pointer}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.radio{display:flex;gap:10px;flex-wrap:wrap}
+.radio label{flex:1 1 140px;border:1px solid #cfc9ba;border-radius:10px;padding:10px;margin:0;cursor:pointer;display:flex;gap:8px;align-items:center;font-weight:600}
+.radio input{width:auto}
+.prow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.prow .n{flex:1}.prow input{width:70px}
+.total{font-size:20px;font-weight:800;text-align:right;margin-top:10px}
+.cat{font-weight:800;margin:12px 0 2px;color:var(--celeste-d);font-size:13px;text-transform:uppercase;letter-spacing:.05em}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;pointer-events:none;transition:.25s;z-index:40;max-width:90%}
+#toast.show{opacity:1}
+.pend{border-left:6px solid var(--gold)}
+@media(max-width:600px){main{padding:12px}.gcard .bal{font-size:28px}}
+</style>
+</head>
+<body>
+<div class="flag"></div>
+<div id="app"></div>
+<div id="modal"></div>
+<div id="toast"></div>
+
+<script>
+/* ===================== Utilidades ===================== */
+const KEY = 'chorilab_giftcards_v1';
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const COP = n => new Intl.NumberFormat('es-CO', {style:'currency', currency:'COP', maximumFractionDigits:0}).format(n || 0);
+const fdate = t => new Date(t).toLocaleString('es-CO', {dateStyle:'medium', timeStyle:'short'});
+const uid = () => Math.random().toString(36).slice(2, 10);
+const hash = s => { // hash simple (demo, sin servidor)
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57; const t = 'chl|' + s;
+  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2800); }
+
+/* ===================== Datos ===================== */
+const defaults = () => ({
+  settings: {
+    admin: {user:'admin', pass: hash('admin123')},
+    bank: 'Transferencia a Nequi / Bancolombia: (escribe aquí tus datos de pago)',
+    cash: 'Pago en efectivo directamente en CHORILAB.'
+  },
+  products: [
+    {id:'c4', cat:'Combos para la casa', name:'Choripán x4', price:30000},
+    {id:'c6', cat:'Combos para la casa', name:'Choripán x6', price:45000},
+    {id:'r1', cat:'Combos en el restaurante', name:'Combo Personal', price:18000},
+    {id:'r2', cat:'Combos en el restaurante', name:'Combo Pareja', price:34000},
+    {id:'r3', cat:'Combos en el restaurante', name:'Combo Trío', price:48000},
+    {id:'r4', cat:'Combos en el restaurante', name:'Combo Parche', price:80000},
+    {id:'r5', cat:'Combos en el restaurante', name:'Combo Familiar', price:110000},
+    {id:'b1', cat:'Bebidas', name:'Gaseosa', price:5000},
+    {id:'b2', cat:'Bebidas', name:'Jugo natural', price:7000},
+    {id:'b3', cat:'Bebidas', name:'Cerveza', price:8000}
+  ],
+  clients: [],
+  tx: []
+});
+let db;
+function load() { try { db = JSON.parse(localStorage.getItem(KEY)) || defaults(); } catch (e) { db = defaults(); } }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('No se pudo guardar en este navegador'); } }
+load();
+
+const ui = { session: null, loginRole: 'client', tab: 'resumen', filter: 'todas', q: '' };
+try { ui.session = JSON.parse(sessionStorage.getItem('chorilab_sess')); } catch (e) {}
+
+/* ===================== Lógica ===================== */
+const client = id => db.clients.find(c => c.id === id);
+const balance = id => db.tx.filter(t => t.clientId === id && t.status === 'confirmada').reduce((s, t) => s + (t.type === 'recharge' ? t.amount : -t.amount), 0);
+const reserved = id => db.tx.filter(t => t.clientId === id && t.status === 'pendiente' && t.type === 'use').reduce((s, t) => s + t.amount, 0);
+const pending = id => db.tx.filter(t => t.clientId === id && t.status === 'pendiente');
+const methodName = m => m === 'transferencia' ? 'Transferencia' : m === 'efectivo' ? 'Efectivo' : '—';
+function newCardNo() {
+  let n; do { n = 'CHOR-' + [0,1,2].map(() => String(Math.floor(Math.random() * 10000)).padStart(4, '0')).join('-'); } while (db.clients.some(c => c.cardNo === n));
+  return n;
+}
+
+/* ===================== Vistas ===================== */
+function render() {
+  const s = ui.session;
+  if (s && s.role === 'client' && !client(s.id)) { ui.session = null; sessionStorage.removeItem('chorilab_sess'); }
+  const v = !ui.session ? loginView() : ui.session.role === 'admin' ? adminView() : clientView();
+  $('#app').innerHTML = v;
+}
+
+function topbar(label) {
+  return `<header class="top"><div class="brand">🌭 CHORILAB<small>Tarjetas de regalo</small></div>
+  <div class="who"><span>${esc(label)}</span><button class="btn ghost sm" style="color:#fff;border-color:#555" data-act="logout">Salir</button></div></header>`;
+}
+
+function loginView() {
+  const r = ui.loginRole;
+  return `<main><div class="login card">
+    <h2 style="text-align:center">Bienvenido a CHORILAB</h2>
+    <div class="tabs"><button class="${r==='client'?'on':''}" data-act="loginrole" data-v="client">Soy cliente</button>
+    <button class="${r==='admin'?'on':''}" data-act="loginrole" data-v="admin">Administrador</button></div>
+    <form data-form="login">
+      <label>Usuario</label><input name="user" autocomplete="username" required autofocus>
+      <label>Clave</label><input name="pass" type="password" autocomplete="current-password" required>
+      <button class="btn cel" style="width:100%;margin-top:14px">Entrar</button>
+    </form>
+    <div class="hint">${r==='admin'
+      ? 'Primer uso: usuario <b>admin</b> · clave <b>admin123</b>. Cámbiala en Ajustes.'
+      : 'Tu usuario y clave te los entrega CHORILAB al crear tu tarjeta.'}</div>
+  </div></main>`;
+}
+
+/* ---------- Admin ---------- */
+function adminView() {
+  const tabs = [['resumen','Resumen'],['clientes','Clientes'],['movimientos','Movimientos'],['productos','Productos'],['ajustes','Ajustes']];
+  let body = '';
+  if (ui.tab === 'resumen') body = adminResumen();
+  if (ui.tab === 'clientes') body = adminClientes();
+  if (ui.tab === 'movimientos') body = adminMov();
+  if (ui.tab === 'productos') body = adminProductos();
+  if (ui.tab === 'ajustes') body = adminAjustes();
+  return topbar('Administrador') + `<main>
+    <div class="tabs">${tabs.map(([k, l]) => `<button class="${ui.tab===k?'on':''}" data-act="tab" data-v="${k}">${l}</button>`).join('')}</div>${body}</main>`;
+}
+
+function adminResumen() {
+  const conf = db.tx.filter(t => t.status === 'confirmada');
+  const rec = conf.filter(t => t.type === 'recharge').reduce((s, t) => s + t.amount, 0);
+  const use = conf.filter(t => t.type === 'use').reduce((s, t) => s + t.amount, 0);
+  const pend = db.tx.filter(t => t.status === 'pendiente').length;
+  const tr = conf.filter(t => t.type === 'recharge' && t.method === 'transferencia').reduce((s, t) => s + t.amount, 0);
+  const ef = rec - tr;
+  const latest = [...db.tx].sort((a, b) => b.created - a.created).slice(0, 6);
+  return `<div class="grid g4" style="margin-bottom:16px">
+    <div class="stat"><span>Clientes</span><b>${db.clients.length}</b></div>
+    <div class="stat"><span>Saldo total en tarjetas</span><b>${COP(rec - use)}</b></div>
+    <div class="stat"><span>Recargas confirmadas</span><b>${COP(rec)}</b><span>Transf. ${COP(tr)} · Efectivo ${COP(ef)}</span></div>
+    <div class="stat"><span>Consumos confirmados</span><b>${COP(use)}</b></div>
+    <div class="stat"><span>Esperando confirmación</span><b>${pend}</b></div></div>
+    <div class="card"><h3>Últimos movimientos</h3>${txTable(latest, 'admin')}</div>`;
+}
+
+function adminClientes() {
+  const q = ui.q.toLowerCase();
+  const list = db.clients.filter(c => !q || (c.name + c.user + c.phone + c.cardNo).toLowerCase().includes(q));
+  return `<div class="card"><h3>Crear cliente</h3>
+    <form data-form="newclient"><div class="row">
+      <div><label>Nombre completo</label><input name="name" required></div>
+      <div><label>Teléfono</label><input name="phone" inputmode="tel"></div></div>
+      <div class="row"><div><label>Usuario</label><input name="user" required autocomplete="off"></div>
+      <div><label>Clave inicial (mín. 4)</label><input name="pass" required minlength="4" autocomplete="off"></div>
+      <div class="fit"><button class="btn gold">Crear tarjeta</button></div></div></form></div>
+    <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="flex:2">Clientes (${list.length})</h3>
+      <input data-search placeholder="Buscar por nombre, usuario o tarjeta" value="${esc(ui.q)}"></div>
+      ${list.length ? `<div class="tw"><table><thead><tr><th>Cliente</th><th>Tarjeta</th><th>Saldo</th><th>Pend.</th><th></th></tr></thead><tbody>
+      ${list.map(c => `<tr><td><b>${esc(c.name)}</b><br><span class="muted">@${esc(c.user)} ${c.phone ? '· ' + esc(c.phone) : ''}</span></td>
+        <td class="muted">${c.cardNo}</td><td><b>${COP(balance(c.id))}</b></td><td>${pending(c.id).length}</td>
+        <td style="white-space:nowrap"><button class="btn sm ok" data-act="recharge" data-id="${c.id}">Recargar</button>
+        <button class="btn sm cel" data-act="use" data-id="${c.id}">Consumo</button>
+        <button class="btn sm ghost" data-act="detail" data-id="${c.id}">Ver</button>
+        <button class="btn sm ghost" data-act="delclient" data-id="${c.id}">🗑</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">Aún no hay clientes.</div>'}</div>`;
+}
+
+function adminMov() {
+  const list = db.tx.filter(t => ui.filter === 'todas' || t.status === ui.filter).sort((a, b) => b.created - a.created);
+  return `<div class="card"><div class="row" style="margin-bottom:8px"><h3 style="flex:2">Movimientos</h3>
+    <select data-filter>${['todas','pendiente','confirmada','rechazada','anulada'].map(s => `<option value="${s}" ${ui.filter===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}</select></div>
+    ${txTable(list, 'admin')}</div>`;
+}
+
+function adminProductos() {
+  const cats = [...new Set(db.products.map(p => p.cat))];
+  return `<div class="card"><h3>Productos de CHORILAB</h3>
+    <p class="muted">Estos productos se usan al registrar consumos. Ajusta nombres y precios cuando lo necesites.</p>
+    ${db.products.map(p => `<form data-form="prod" data-id="${p.id}" class="row" style="margin-bottom:6px">
+      <div><input name="cat" value="${esc(p.cat)}" list="cats" aria-label="Categoría"></div>
+      <div style="flex:2"><input name="name" value="${esc(p.name)}" required aria-label="Nombre"></div>
+      <div><input name="price" type="number" min="0" step="500" value="${p.price}" required aria-label="Precio"></div>
+      <div class="fit"><button class="btn sm cel">Guardar</button> <button type="button" class="btn sm ghost" data-act="delprod" data-id="${p.id}">🗑</button></div></form>`).join('')}
+    <datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+    <div class="card"><h3>Agregar producto</h3><form data-form="newprod" class="row">
+      <div><label>Categoría</label><input name="cat" list="cats" required></div>
+      <div style="flex:2"><label>Nombre</label><input name="name" required></div>
+      <div><label>Precio</label><input name="price" type="number" min="0" step="500" required></div>
+      <div class="fit"><button class="btn gold">Agregar</button></div></form></div>`;
+}
+
+function adminAjustes() {
+  return `<div class="card"><h3>Métodos de pago</h3><form data-form="settings">
+      <label>Instrucciones de transferencia (se muestran al recargar)</label><textarea name="bank" rows="2">${esc(db.settings.bank)}</textarea>
+      <label>Instrucciones de efectivo</label><textarea name="cash" rows="2">${esc(db.settings.cash)}</textarea>
+      <button class="btn cel" style="margin-top:10px">Guardar</button></form></div>
+    <div class="card"><h3>Clave de administrador</h3><form data-form="adminpass" class="row">
+      <div><label>Clave actual</label><input type="password" name="old" required></div>
+      <div><label>Nueva clave (mín. 4)</label><input type="password" name="new" minlength="4" required></div>
+      <div class="fit"><button class="btn cel">Cambiar</button></div></form></div>
+    <div class="card"><h3>Copia de seguridad</h3>
+      <p class="muted">Los datos viven en este navegador. Descarga una copia con frecuencia.</p>
+      <button class="btn gold" data-act="export">Descargar copia</button>
+      <label class="btn ghost" style="display:inline-block;margin:0 0 0 6px;cursor:pointer">Restaurar copia<input type="file" accept=".json" data-import hidden></label></div>`;
+}
+
+/* ---------- Cliente ---------- */
+function cardHTML(c) {
+  return `<div class="gcard"><div class="t"><b>CHORILAB</b><span>Tarjeta de regalo</span></div>
+    <div class="lbl" style="margin-top:22px">Saldo disponible</div><div class="bal" style="margin-top:2px">${COP(balance(c.id))}</div>
+    <div class="num">${c.cardNo}</div><div class="nm">${esc(c.name)}</div></div>`;
+}
+function clientView() {
+  const c = client(ui.session.id);
+  const pend = pending(c.id);
+  const hist = db.tx.filter(t => t.clientId === c.id && t.status !== 'pendiente').sort((a, b) => b.created - a.created);
+  return topbar(c.name) + `<main><div class="grid g2" style="align-items:start">
+    <div>${cardHTML(c)}${reserved(c.id) ? `<p class="muted">Hay ${COP(reserved(c.id))} pendientes de confirmar en consumos.</p>` : ''}</div>
+    <div class="card"><h3>Por confirmar (${pend.length})</h3>
+      <p class="muted">Cada recarga y cada uso de tu tarjeta necesita tu confirmación.</p>
+      ${pend.length ? pend.map(t => `<div class="card pend" style="margin:8px 0;padding:12px">
+        <div><span class="badge b-${t.type}">${t.type==='recharge'?'Recarga':'Consumo'}</span> <b>${COP(t.amount)}</b></div>
+        <div class="muted">${fdate(t.created)}${t.type==='recharge' ? ' · ' + methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : ''}</div>
+        ${t.items ? `<div class="muted">${t.items.map(i => `${i.qty}× ${esc(i.name)}`).join(', ')}</div>` : ''}
+        ${t.note ? `<div class="muted">Nota: ${esc(t.note)}</div>` : ''}
+        <div style="margin-top:8px"><button class="btn sm ok" data-act="confirm" data-id="${t.id}">Revisar y confirmar</button></div></div>`).join('') : '<div class="empty">Nada pendiente ✅</div>'}</div></div>
+    <div class="card"><h3>Mi historial</h3>${txTable(hist, 'client')}</div>
+    <div class="card"><h3>Cambiar mi clave</h3><form data-form="clientpass" class="row">
+      <div><label>Clave actual</label><input type="password" name="old" required></div>
+      <div><label>Nueva clave (mín. 4)</label><input type="password" name="new" minlength="4" required></div>
+      <div class="fit"><button class="btn cel">Cambiar</button></div></form></div></main>`;
+}
+
+/* ---------- Tabla de movimientos ---------- */
+function txTable(list, role) {
+  if (!list.length) return '<div class="empty">Sin movimientos.</div>';
+  return `<div class="tw"><table><thead><tr><th>Fecha</th>${role==='admin'?'<th>Cliente</th>':''}<th>Tipo</th><th>Detalle</th><th>Monto</th><th>Estado</th>${role==='admin'?'<th></th>':''}</tr></thead><tbody>
+  ${list.map(t => {
+    const c = client(t.clientId);
+    const det = t.type === 'recharge' ? methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : (t.items || []).map(i => `${i.qty}× ${esc(i.name)}`).join(', ');
+    return `<tr><td class="muted">${fdate(t.created)}</td>${role==='admin'?`<td>${c ? esc(c.name) : '<i>eliminado</i>'}</td>`:''}
+      <td><span class="badge b-${t.type}">${t.type==='recharge'?'Recarga':'Consumo'}</span></td>
+      <td class="muted">${det}${t.note ? '<br>' + esc(t.note) : ''}</td>
+      <td class="${t.type==='recharge'?'pos':'neg'}">${t.type==='recharge'?'+':'−'}${COP(t.amount)}</td>
+      <td><span class="badge b-${t.status}">${t.status}</span></td>
+      ${role==='admin'?`<td>${t.status==='pendiente'?`<button class="btn sm ghost" data-act="cancel" data-id="${t.id}">Anular</button>`:''}</td>`:''}</tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+/* ===================== Modales ===================== */
+function modal(title, body) {
+  $('#modal').innerHTML = `<div class="ov"><div class="md" role="dialog" aria-modal="true"><div class="mh"><h3>${title}</h3><button class="x" data-act="close" aria-label="Cerrar">✕</button></div>${body}</div></div>`;
+}
+const closeModal = () => { $('#modal').innerHTML = ''; };
+
+function openRecharge(id) {
+  const c = client(id);
+  modal('Recargar a ' + esc(c.name), `<form data-form="recharge" data-id="${id}">
+    <label>Monto de la recarga (COP)</label><input name="amount" type="number" min="1000" step="500" required>
+    <div class="chips">${[20000,50000,100000,200000].map(v => `<button type="button" class="btn sm ghost" data-act="amt" data-v="${v}">${COP(v)}</button>`).join('')}</div>
+    <label>Método de pago</label>
+    <div class="radio"><label><input type="radio" name="method" value="efectivo" checked> 💵 Efectivo</label>
+    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label></div>
+    <div class="hint" id="payhint">${esc(db.settings.cash)}</div>
+    <div id="refbox" hidden><label>Referencia / comprobante de la transferencia</label><input name="ref"></div>
+    <label>Nota (opcional)</label><input name="note">
+    <p class="muted">El saldo se acredita cuando el cliente confirme la recarga desde su cuenta.</p>
+    <button class="btn ok" style="width:100%">Enviar recarga al cliente</button></form>`);
+}
+
+function openUse(id) {
+  const c = client(id);
+  const avail = balance(id) - reserved(id);
+  const cats = [...new Set(db.products.map(p => p.cat))];
+  modal('Consumo de ' + esc(c.name), `<form data-form="use" data-id="${id}">
+    <div class="hint">Saldo disponible: <b>${COP(avail)}</b></div>
+    ${cats.map(cat => `<div class="cat">${esc(cat)}</div>${db.products.filter(p => p.cat === cat).map(p =>
+      `<div class="prow"><div class="n">${esc(p.name)}<div class="muted">${COP(p.price)}</div></div>
+      <input class="qty" type="number" min="0" value="0" name="q_${p.id}" data-price="${p.price}" aria-label="Cantidad ${esc(p.name)}"></div>`).join('')}`).join('')}
+    <label>Nota (opcional, ej. mesa o pedido)</label><input name="note">
+    <div class="total">Total: <span id="tot">${COP(0)}</span></div>
+    <p class="muted">El descuento se aplica cuando el cliente confirme el uso desde su cuenta.</p>
+    <button class="btn cel" style="width:100%">Enviar consumo al cliente</button></form>`);
+}
+
+function openDetail(id) {
+  const c = client(id);
+  const list = db.tx.filter(t => t.clientId === id).sort((a, b) => b.created - a.created);
+  modal(esc(c.name), `${cardHTML(c)}<p class="muted">Usuario: @${esc(c.user)} ${c.phone ? '· Tel: ' + esc(c.phone) : ''}</p>
+    <div style="margin-top:8px">${txTable(list, 'client')}</div>
+    <form data-form="resetpass" data-id="${id}" class="row" style="margin-top:10px"><div><label>Restablecer clave del cliente</label><input name="new" minlength="4" required placeholder="Nueva clave"></div>
+    <div class="fit"><button class="btn sm cel">Guardar</button></div></form>`);
+}
+
+function openConfirm(id) {
+  const t = db.tx.find(x => x.id === id);
+  if (!t || t.status !== 'pendiente') return;
+  modal(t.type === 'recharge' ? 'Confirmar recarga' : 'Confirmar uso de tu tarjeta', `<form data-form="confirm" data-id="${id}">
+    <div class="total" style="text-align:left">${t.type==='recharge'?'+':'−'}${COP(t.amount)}</div>
+    <p class="muted">${t.type==='recharge' ? 'Método: ' + methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : (t.items || []).map(i => `${i.qty}× ${esc(i.name)}`).join(', ')}</p>
+    ${t.note ? `<p class="muted">Nota: ${esc(t.note)}</p>` : ''}
+    <label>Escribe tu clave para confirmar</label><input type="password" name="pass" autocomplete="current-password">
+    <div class="row" style="margin-top:12px"><button class="btn ok">Confirmar</button>
+    <button type="button" class="btn red" data-act="reject" data-id="${id}">Rechazar</button></div></form>`);
+}
+
+/* ===================== Formularios ===================== */
+const forms = {
+  login(f, d) {
+    const user = d.get('user').trim().toLowerCase(), pass = d.get('pass');
+    if (ui.loginRole === 'admin') {
+      if (user === db.settings.admin.user.toLowerCase() && hash(pass) === db.settings.admin.pass) ui.session = {role:'admin'};
+      else return toast('Usuario o clave de administrador incorrectos');
+    } else {
+      const c = db.clients.find(x => x.user.toLowerCase() === user && x.pass === hash(pass));
+      if (!c) return toast('Usuario o clave incorrectos');
+      ui.session = {role:'client', id:c.id};
+    }
+    sessionStorage.setItem('chorilab_sess', JSON.stringify(ui.session));
+    ui.tab = 'resumen'; render();
+  },
+  newclient(f, d) {
+    const user = d.get('user').trim();
+    if (db.clients.some(c => c.user.toLowerCase() === user.toLowerCase()) || user.toLowerCase() === db.settings.admin.user.toLowerCase()) return toast('Ese usuario ya existe');
+    if (d.get('pass').length < 4) return toast('La clave debe tener al menos 4 caracteres');
+    db.clients.push({id:uid(), name:d.get('name').trim(), phone:d.get('phone').trim(), user, pass:hash(d.get('pass')), cardNo:newCardNo(), created:Date.now()});
+    save(); render(); toast('Cliente creado. Entrégale su usuario y clave.');
+  },
+  recharge(f, d) {
+    const amount = Math.round(+d.get('amount'));
+    if (!(amount > 0)) return toast('Monto inválido');
+    const method = d.get('method');
+    if (method === 'transferencia' && !d.get('ref').trim()) return toast('Indica la referencia de la transferencia');
+    db.tx.push({id:uid(), clientId:f.dataset.id, type:'recharge', amount, method, ref:d.get('ref').trim(), note:d.get('note').trim(), status:'pendiente', created:Date.now()});
+    save(); closeModal(); render(); toast('Recarga enviada: queda pendiente de confirmación del cliente');
+  },
+  use(f, d) {
+    const id = f.dataset.id; const items = []; let total = 0;
+    db.products.forEach(p => { const q = Math.floor(+d.get('q_' + p.id) || 0); if (q > 0) { items.push({id:p.id, name:p.name, qty:q, price:p.price}); total += q * p.price; } });
+    if (!items.length) return toast('Selecciona al menos un producto');
+    if (total > balance(id) - reserved(id)) return toast('Saldo insuficiente para este consumo');
+    db.tx.push({id:uid(), clientId:id, type:'use', amount:total, items, note:d.get('note').trim(), status:'pendiente', created:Date.now()});
+    save(); closeModal(); render(); toast('Consumo enviado: queda pendiente de confirmación del cliente');
+  },
+  confirm(f, d) {
+    const t = db.tx.find(x => x.id === f.dataset.id), c = t && client(t.clientId);
+    if (!t || t.status !== 'pendiente') return toast('Este movimiento ya no está pendiente');
+    if (hash(d.get('pass') || '') !== c.pass) return toast('Clave incorrecta');
+    if (t.type === 'use' && t.amount > balance(c.id)) return toast('Saldo insuficiente');
+    t.status = 'confirmada'; t.resolved = Date.now(); save(); closeModal(); render(); toast('Movimiento confirmado ✅');
+  },
+  prod(f, d) {
+    const p = db.products.find(x => x.id === f.dataset.id);
+    p.cat = d.get('cat').trim(); p.name = d.get('name').trim(); p.price = Math.max(0, Math.round(+d.get('price')));
+    save(); toast('Producto actualizado');
+  },
+  newprod(f, d) {
+    db.products.push({id:uid(), cat:d.get('cat').trim(), name:d.get('name').trim(), price:Math.max(0, Math.round(+d.get('price')))});
+    save(); render(); toast('Producto agregado');
+  },
+  settings(f, d) { db.settings.bank = d.get('bank').trim(); db.settings.cash = d.get('cash').trim(); save(); toast('Ajustes guardados'); },
+  adminpass(f, d) {
+    if (hash(d.get('old')) !== db.settings.admin.pass) return toast('La clave actual no coincide');
+    db.settings.admin.pass = hash(d.get('new')); save(); f.reset(); toast('Clave actualizada');
+  },
+  clientpass(f, d) {
+    const c = client(ui.session.id);
+    if (hash(d.get('old')) !== c.pass) return toast('La clave actual no coincide');
+    c.pass = hash(d.get('new')); save(); f.reset(); toast('Clave actualizada');
+  },
+  resetpass(f, d) { client(f.dataset.id).pass = hash(d.get('new')); save(); toast('Clave del cliente restablecida'); closeModal(); }
+};
+
+/* ===================== Eventos ===================== */
+document.addEventListener('submit', e => {
+  const f = e.target.closest('form[data-form]'); if (!f) return;
+  e.preventDefault(); const fn = forms[f.dataset.form]; if (fn) fn(f, new FormData(f));
+});
+
+document.addEventListener('click', e => {
+  if (e.target.classList.contains('ov')) return closeModal();
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const a = b.dataset.act, id = b.dataset.id;
+  if (a === 'close') closeModal();
+  else if (a === 'logout') { ui.session = null; sessionStorage.removeItem('chorilab_sess'); render(); }
+  else if (a === 'loginrole') { ui.loginRole = b.dataset.v; render(); }
+  else if (a === 'tab') { ui.tab = b.dataset.v; ui.q = ''; render(); }
+  else if (a === 'recharge') openRecharge(id);
+  else if (a === 'use') openUse(id);
+  else if (a === 'detail') openDetail(id);
+  else if (a === 'confirm') openConfirm(id);
+  else if (a === 'amt') { const i = $('input[name=amount]'); if (i) i.value = b.dataset.v; }
+  else if (a === 'reject') {
+    const t = db.tx.find(x => x.id === id);
+    if (t && t.status === 'pendiente') { t.status = 'rechazada'; t.resolved = Date.now(); save(); closeModal(); render(); toast('Movimiento rechazado'); }
+  }
+  else if (a === 'cancel') {
+    const t = db.tx.find(x => x.id === id);
+    if (t && t.status === 'pendiente' && confirm('¿Anular este movimiento pendiente?')) { t.status = 'anulada'; t.resolved = Date.now(); save(); render(); }
+  }
+  else if (a === 'delclient') {
+    const c = client(id);
+    if (confirm(`¿Eliminar a ${c.name}? Se borrarán también sus movimientos.`)) { db.clients = db.clients.filter(x => x.id !== id); db.tx = db.tx.filter(t => t.clientId !== id); save(); render(); }
+  }
+  else if (a === 'delprod') {
+    if (confirm('¿Eliminar este producto?')) { db.products = db.products.filter(p => p.id !== id); save(); render(); }
+  }
+  else if (a === 'export') {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], {type:'application/json'}));
+    const l = document.createElement('a'); l.href = url; l.download = 'chorilab-tarjetas-' + new Date().toISOString().slice(0, 10) + '.json'; l.click(); URL.revokeObjectURL(url);
+  }
+});
+
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.matches('[data-search]')) {
+    ui.q = t.value; render(); const n = $('[data-search]'); n.focus(); n.setSelectionRange(n.value.length, n.value.length);
+  }
+  if (t.classList.contains('qty')) {
+    let s = 0; document.querySelectorAll('.qty').forEach(i => s += (Math.floor(+i.value) || 0) * +i.dataset.price);
+    $('#tot').textContent = COP(s);
+  }
+});
+
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.matches('[data-filter]')) { ui.filter = t.value; render(); }
+  if (t.name === 'method') {
+    const tr = t.value === 'transferencia';
+    $('#refbox').hidden = !tr; $('#payhint').textContent = tr ? db.settings.bank : db.settings.cash;
+    $('#refbox input').required = tr;
+  }
+  if (t.matches('[data-import]') && t.files[0]) {
+    const r = new FileReader();
+    r.onload = () => { try { const d = JSON.parse(r.result); if (!d.clients || !d.tx || !d.products || !d.settings) throw 0; if (confirm('Esto reemplazará los datos actuales. ¿Continuar?')) { db = d; save(); render(); toast('Copia restaurada'); } } catch (x) { toast('Archivo de copia no válido'); } };
+    r.readAsText(t.files[0]);
+  }
+});
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+render();
+</script>
+</body>
+</html>
