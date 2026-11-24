@@ -110,16 +110,24 @@ function normalize(db) {
 let S = {rev:0, users:{}, db:null, dek:null, kb64:null, me:null};
 const ui = {
   view:'loading', tab:'caja', ctab:'tarjeta', filter:'todas', tfilter:'todos', q:'', csort:'name', busy:false, dirty:false, error:'',
-  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false, lfilter:'activo', lq:''
+  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false, lfilter:'todos', lq:''
 };
 
 const client = id => S.db.clients.find(c => c.id === id);
 const product = id => S.db.products.find(p => p.id === id);
-const balance = id => S.db.tx.filter(t => t.clientId === id && t.status === 'confirmada').reduce((s, t) => s + (t.type === 'recharge' ? t.amount : -t.amount), 0);
-const reserved = id => S.db.tx.filter(t => t.clientId === id && t.status === 'pendiente' && t.type === 'use').reduce((s, t) => s + t.amount, 0);
+/* Abonos de apartados (los pagados con la tarjeta descuentan del saldo, previa confirmación del cliente) */
+const abSt = a => a.status || 'confirmada';
+const abOk = a => !a.voided && abSt(a) === 'confirmada';
+const sumA = list => list.reduce((s, a) => s + a.amount, 0);
+const cardAbs = (db, id, st) => (db.layaways || []).filter(l => l.clientId === id).flatMap(l => l.abonos || []).filter(a => a.method === 'tarjeta' && !a.voided && !a.refunded && abSt(a) === st);
+const balOf = (db, id) => db.tx.filter(t => t.clientId === id && t.status === 'confirmada').reduce((s, t) => s + (t.type === 'recharge' ? t.amount : -t.amount), 0) - sumA(cardAbs(db, id, 'confirmada'));
+const resOf = (db, id) => db.tx.filter(t => t.clientId === id && t.status === 'pendiente' && t.type === 'use').reduce((s, t) => s + t.amount, 0) + sumA(cardAbs(db, id, 'pendiente'));
+const balance = id => balOf(S.db, id);
+const reserved = id => resOf(S.db, id);
+const pendingAbonos = id => S.db.layaways.filter(l => l.clientId === id && l.status === 'activo').flatMap(l => (l.abonos || []).filter(a => a.method === 'tarjeta' && !a.voided && abSt(a) === 'pendiente').map(a => ({l, a})));
 const pending = id => S.db.tx.filter(t => t.clientId === id && t.status === 'pendiente');
 const lastActivity = id => S.db.tx.filter(t => t.clientId === id).reduce((m, t) => Math.max(m, t.created), 0);
-const methodName = m => m === 'transferencia' ? 'Transferencia' : m === 'efectivo' ? 'Efectivo' : '—';
+const methodName = m => m === 'transferencia' ? 'Transferencia' : m === 'efectivo' ? 'Efectivo' : m === 'tarjeta' ? 'Tarjeta de regalo' : '—';
 const txLabel = t => t.type === 'recharge' ? 'Recarga' : t.type === 'sale' ? 'Venta' : 'Consumo';
 const tracked = p => p.stock !== null && p.stock !== undefined;
 const stockState = p => !tracked(p) ? 'free' : p.stock <= 0 ? 'out' : p.stock <= (p.min || 0) ? 'low' : 'ok';
@@ -317,7 +325,7 @@ function adminResumen() {
   const conf = S.db.tx.filter(t => t.status === 'confirmada');
   const rec = conf.filter(t => t.type === 'recharge').reduce((s, t) => s + t.amount, 0);
   const use = conf.filter(t => t.type === 'use').reduce((s, t) => s + t.amount, 0);
-  const pend = S.db.tx.filter(t => t.status === 'pendiente').length;
+  const pend = S.db.tx.filter(t => t.status === 'pendiente').length + S.db.layaways.reduce((n, l) => n + (l.abonos || []).filter(a => !a.voided && abSt(a) === 'pendiente').length, 0);
   const tr = conf.filter(t => t.type === 'recharge' && t.method === 'transferencia').reduce((s, t) => s + t.amount, 0);
   const hoy = conf.filter(t => t.type !== 'recharge' && isToday(t.resolved || t.created));
   const hoySales = hoy.filter(t => t.type === 'sale');
@@ -325,7 +333,7 @@ function adminResumen() {
   const sum = a => a.reduce((s, t) => s + t.amount + (t.topup || 0), 0);
   const hoyTop = hoy.reduce((s, t) => s + (t.topup || 0), 0);
   const layAct = S.db.layaways.filter(l => l.status === 'activo');
-  const abonosHoy = S.db.layaways.reduce((s, l) => s + l.abonos.filter(a => !a.voided && isToday(a.created)).reduce((x, a) => x + a.amount, 0), 0);
+  const abonosHoy = S.db.layaways.reduce((s, l) => s + l.abonos.filter(a => abOk(a) && !a.refunded && isToday(a.created)).reduce((x, a) => x + a.amount, 0), 0);
   const prox = [...layAct].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 5);
   const cnt = {}; hoy.forEach(t => (t.items || []).forEach(i => { cnt[i.name] = (cnt[i.name] || 0) + i.qty; }));
   const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -339,7 +347,7 @@ function adminResumen() {
     <div class="stat"><span>Clientes</span><b>${S.db.clients.length}</b></div>
     <div class="stat"><span>Apartados activos</span><b>${layAct.length}</b><span>Por cobrar ${COP(layAct.reduce((s, l) => s + layDue(l), 0))}</span></div>
     <div class="stat"><span>Abonos de hoy</span><b>${COP(abonosHoy)}</b></div>
-    <div class="stat"><span>Saldo total en tarjetas</span><b>${COP(rec - use)}</b></div>
+    <div class="stat"><span>Saldo total en tarjetas</span><b>${COP(S.db.clients.reduce((s, c) => s + balance(c.id), 0))}</b></div>
     <div class="stat"><span>Recargas confirmadas</span><b>${COP(rec)}</b><span>Transf. ${COP(tr)} · Efectivo ${COP(rec - tr)}</span></div>
     <div class="stat"><span>Consumos con tarjeta</span><b>${COP(use)}</b></div></div>
     <div class="grid g2">
@@ -414,10 +422,12 @@ const dstr = d => { const x = new Date(d); return x.getFullYear() + '-' + String
 const todayStr = () => dstr(Date.now());
 const fday = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO', {weekday:'short', day:'numeric', month:'short', year:'numeric'}) : '—';
 const daysTo = s => Math.round((new Date(s + 'T00:00:00') - new Date(new Date().setHours(0, 0, 0, 0))) / 864e5);
-const layPaid = l => (l.abonos || []).filter(a => !a.voided).reduce((s, a) => s + a.amount, 0);
+const layPaid = l => sumA((l.abonos || []).filter(abOk));
+const layPend = l => sumA((l.abonos || []).filter(a => !a.voided && abSt(a) === 'pendiente'));
 const layDue = l => Math.max(0, l.total - layPaid(l));
+const layOpen = l => Math.max(0, l.total - layPaid(l) - layPend(l));
 const layById = id => S.db.layaways.find(x => x.id === id);
-const laySort = (a, b) => (a.status === 'activo') !== (b.status === 'activo') ? (a.status === 'activo' ? -1 : 1) : a.status === 'activo' ? a.dueDate.localeCompare(b.dueDate) : b.created - a.created;
+const laySort = (a, b) => (a.status === 'activo') !== (b.status === 'activo') ? (a.status === 'activo' ? -1 : 1) : a.status === 'activo' ? a.dueDate.localeCompare(b.dueDate) : (b.cancelled || b.delivered || b.created) - (a.cancelled || a.delivered || a.created);
 function dueBadge(l) {
   if (l.status === 'entregado') return `<span class="badge b-confirmada">Entregado ${new Date(l.delivered).toLocaleDateString('es-CO', {dateStyle:'medium'})}</span>`;
   if (l.status === 'cancelado') return '<span class="badge b-anulada">Cancelado</span>';
@@ -425,26 +435,40 @@ function dueBadge(l) {
   return n < 0 ? `<span class="badge b-out">Atrasado ${-n} d</span>` : n === 0 ? '<span class="badge b-low">Entrega hoy</span>' : n <= 3 ? `<span class="badge b-low">En ${n} d</span>` : `<span class="badge b-ok">En ${n} d</span>`;
 }
 function layCard(l, role) {
-  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), active = l.status === 'activo';
+  const adm = role === 'admin';
+  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), pend = layPend(l), open = layOpen(l);
+  const active = l.status === 'activo', cancelled = l.status === 'cancelado';
   const pct = l.total ? Math.min(100, Math.round(paid / l.total * 100)) : 100;
-  const btns = role !== 'admin' ? '' : `<div class="fit" style="white-space:nowrap">
-    ${active && due > 0 ? `<button class="btn sm ok" data-act="layabono" data-id="${l.id}">Abonar</button> ` : ''}
-    ${active && due === 0 ? `<button class="btn sm cel" data-act="laydeliver" data-id="${l.id}">Entregar</button> ` : ''}
+  const refundPend = cancelled && l.refundDue && !l.refundDone;
+  const btns = `<div class="fit" style="white-space:nowrap">
+    ${adm && active && open > 0 ? `<button class="btn sm ok" data-act="layabono" data-id="${l.id}">Abonar</button> ` : ''}
+    ${adm && active && due === 0 ? `<button class="btn sm cel" data-act="laydeliver" data-id="${l.id}">Entregar</button> ` : ''}
+    ${adm && refundPend ? `<button class="btn sm ok" data-act="layrefund" data-id="${l.id}">Marcar devuelto</button> ` : ''}
+    ${!adm && active && pend > 0 ? `<button class="btn sm ok" data-act="ctab" data-v="tarjeta">Confirmar abono</button> ` : ''}
     <button class="btn sm ghost" data-act="laydetail" data-id="${l.id}">Ver</button></div>`;
+  const notes = [];
+  if (active && pend > 0) notes.push(adm ? `<b>Por confirmar: ${COP(pend)}</b> pagados con la tarjeta, esperando la clave del cliente.` : `<b>Tienes ${COP(pend)} por confirmar</b>: revisa "Mi tarjeta" y confirma el abono con tu clave.`);
+  if (cancelled) {
+    if (l.refundCard) notes.push(`↩ ${COP(l.refundCard)} volvieron al saldo de la tarjeta de regalo.`);
+    if (l.refundDue) notes.push(l.refundDone ? `Devueltos ${COP(l.refundDue)} al cliente (efectivo/transferencia).` : `<b class="neg">Pendiente devolver ${COP(l.refundDue)} al cliente (efectivo/transferencia).</b>`);
+  }
   return `<div class="card lay ${active ? '' : 'done'}">
     <div class="row" style="align-items:flex-start"><div style="flex:2 1 220px">
-      ${role === 'admin' ? `<b>${c ? esc(c.name) : '<i>cliente eliminado</i>'}</b><br>` : ''}
+      ${adm ? `<b>${c ? esc(c.name) : '<i>cliente eliminado</i>'}</b><br>` : ''}
       <span class="muted">${itemsText(l.items)}</span>${l.note ? `<br><span class="muted">Nota: ${esc(l.note)}</span>` : ''}</div>
       <div class="fit" style="text-align:right"><div class="muted">Entrega</div><b>${fday(l.dueDate)}</b><br>${dueBadge(l)}</div></div>
     <div class="lbar" role="img" aria-label="Abonado ${pct}%"><i style="width:${pct}%"></i></div>
     <div class="row" style="margin-top:8px"><div><span class="muted">Abonado</span><br><b class="pos">${COP(paid)}</b></div>
-      <div><span class="muted">Saldo</span><br>${l.status === 'cancelado' ? '<b>—</b>' : `<b class="${due ? 'neg' : 'pos'}">${COP(due)}</b>`}</div>
-      <div><span class="muted">Total</span><br><b>${COP(l.total)}</b></div>${btns}</div></div>`;
+      <div><span class="muted">Saldo</span><br>${cancelled ? '<b>—</b>' : `<b class="${due ? 'neg' : 'pos'}">${COP(due)}</b>`}</div>
+      <div><span class="muted">Total</span><br><b>${COP(l.total)}</b></div>${btns}</div>
+    ${notes.length ? `<div class="muted" style="margin-top:8px">${notes.join(' ')}</div>` : ''}</div>`;
 }
 function adminApartados() {
   const L = S.db.layaways, q = ui.lq.toLowerCase();
   const act = L.filter(l => l.status === 'activo');
   const late = act.filter(l => daysTo(l.dueDate) <= 0).length;
+  const refunds = L.filter(l => l.status === 'cancelado' && l.refundDue && !l.refundDone);
+  const cnt = {activo: act.length, entregado: L.filter(l => l.status === 'entregado').length, cancelado: L.filter(l => l.status === 'cancelado').length, todos: L.length};
   const list = L.filter(l => {
     if (ui.lfilter !== 'todos' && l.status !== ui.lfilter) return false;
     if (!q) return true;
@@ -455,12 +479,13 @@ function adminApartados() {
     <div class="stat"><span>Apartados activos</span><b>${act.length}</b></div>
     <div class="stat"><span>Abonado en activos</span><b>${COP(act.reduce((s, l) => s + layPaid(l), 0))}</b></div>
     <div class="stat"><span>Por cobrar</span><b>${COP(act.reduce((s, l) => s + layDue(l), 0))}</b></div>
-    <div class="stat"><span>Entrega hoy o atrasados</span><b class="${late ? 'neg' : ''}">${late}</b></div></div>
+    <div class="stat"><span>Entrega hoy o atrasados</span><b class="${late ? 'neg' : ''}">${late}</b></div>
+    ${refunds.length ? `<div class="stat"><span>Devoluciones pendientes</span><b class="neg">${COP(refunds.reduce((s, l) => s + l.refundDue, 0))}</b><span>${refunds.length} apartado(s) cancelado(s)</span></div>` : ''}</div>
     <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="flex:2 1 160px">Apartados (${list.length})</h3>
       <input data-lsearch type="search" placeholder="Buscar…" value="${esc(ui.lq)}">
-      <select data-lfilter aria-label="Estado">${[['activo', 'Activos'], ['entregado', 'Entregados'], ['cancelado', 'Cancelados'], ['todos', 'Todos']].map(([v, t]) => `<option value="${v}" ${ui.lfilter === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <select data-lfilter aria-label="Estado">${[['todos', 'Todos'], ['activo', 'Activos'], ['entregado', 'Entregados'], ['cancelado', 'Cancelados']].map(([v, t]) => `<option value="${v}" ${ui.lfilter === v ? 'selected' : ''}>${t} (${cnt[v]})</option>`).join('')}</select>
       <div class="fit"><button class="btn gold" data-act="laynew">+ Nuevo apartado</button></div></div>
-      <p class="muted">Un apartado reserva productos para un cliente: el stock se descuenta al crearlo, el cliente va abonando y se entrega cuando el saldo llega a $0.</p></div>
+      <p class="muted">Un apartado reserva productos para un cliente: el stock se descuenta al crearlo, el cliente va abonando (en caja o con su tarjeta de regalo) y se entrega cuando el saldo llega a $0. Los cancelados quedan en la lista, con su devolución.</p></div>
     ${list.length ? list.map(l => layCard(l, 'admin')).join('') : '<div class="card"><div class="empty">No hay apartados en esta vista.</div></div>'}`;
 }
 function clientApartados(c) {
@@ -577,21 +602,27 @@ function menuHTML() {
 function clientView() {
   const c = client(S.me.cid);
   const pend = pending(c.id);
+  const pendAb = pendingAbonos(c.id);
   const hist = S.db.tx.filter(t => t.clientId === c.id && t.status !== 'pendiente').sort((a, b) => b.created - a.created);
-  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length ? ` (${pend.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button><button class="${ui.ctab==='apartados'?'on':''}" data-act="ctab" data-v="apartados">Mis apartados${(n => n ? ' (' + n + ')' : '')(S.db.layaways.filter(l => l.clientId === c.id && l.status === 'activo').length)}</button></div>`;
+  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length + pendAb.length ? ` (${pend.length + pendAb.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button><button class="${ui.ctab==='apartados'?'on':''}" data-act="ctab" data-v="apartados">Mis apartados${(n => n ? ' (' + n + ')' : '')(S.db.layaways.filter(l => l.clientId === c.id && l.status === 'activo').length)}</button></div>`;
   if (ui.ctab === 'menu') return topbar(c.name) + `<main>${tabs}${menuHTML()}</main>`;
   if (ui.ctab === 'apartados') return topbar(c.name) + `<main>${tabs}${clientApartados(c)}</main>`;
   return topbar(c.name) + `<main>${tabs}<div class="grid g2" style="align-items:start">
-    <div>${cardHTML(c)}${reserved(c.id) ? `<p class="muted">Hay ${COP(reserved(c.id))} pendientes de confirmar en consumos.</p>` : ''}</div>
-    <div class="card"><h3>Por confirmar (${pend.length})</h3>
+    <div>${cardHTML(c)}${reserved(c.id) ? `<p class="muted">Hay ${COP(reserved(c.id))} por confirmar (consumos y abonos de apartados).</p>` : ''}</div>
+    <div class="card"><h3>Por confirmar (${pend.length + pendAb.length})</h3>
       <p class="muted">Cada recarga y cada uso de tu tarjeta necesita tu confirmación.</p>
+      ${pendAb.map(({l, a}) => `<div class="card pend" style="margin:8px 0;padding:12px">
+        <div><span class="badge b-sale">Abono apartado</span> <b>${COP(a.amount)}</b></div>
+        <div class="muted">${fdate(a.created)} · Tarjeta de regalo</div>
+        <div class="muted">${itemsText(l.items)} · Entrega ${fday(l.dueDate)}</div>
+        <div style="margin-top:8px"><button class="btn sm ok" data-act="confirmabono" data-id="${l.id}" data-aid="${a.id}">Revisar y confirmar</button></div></div>`).join('')}
       ${pend.length ? pend.map(t => `<div class="card pend" style="margin:8px 0;padding:12px">
         <div><span class="badge b-${t.type}">${txLabel(t)}</span> <b>${COP(t.amount)}</b></div>
         <div class="muted">${fdate(t.created)}${t.type==='recharge' ? ' · ' + methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : ''}</div>
         ${t.items ? `<div class="muted">${itemsText(t.items)}</div>` : ''}
         ${t.topup ? `<div class="muted">Total del pedido: ${COP(t.amount + t.topup)} · el resto (${COP(t.topup)}) se paga en ${methodName(t.topupMethod).toLowerCase()}</div>` : ''}
         ${t.note ? `<div class="muted">Nota: ${esc(t.note)}</div>` : ''}
-        <div style="margin-top:8px"><button class="btn sm ok" data-act="confirm" data-id="${t.id}">Revisar y confirmar</button></div></div>`).join('') : '<div class="empty">Nada pendiente ✅</div>'}</div></div>
+        <div style="margin-top:8px"><button class="btn sm ok" data-act="confirm" data-id="${t.id}">Revisar y confirmar</button></div></div>`).join('') : (pendAb.length ? '' : '<div class="empty">Nada pendiente ✅</div>')}</div></div>
     <div class="card"><h3>Mi historial</h3>${txTable(hist, 'client')}</div>
     <div class="card"><h3>Cambiar mi clave</h3><form data-form="mypass" class="row">
       <div><label>Clave actual</label><input type="password" name="old" required autocomplete="current-password"></div>
@@ -686,62 +717,122 @@ function openStock(id) {
     <label>Motivo (opcional)</label><input name="note" placeholder="Compra a proveedor, conteo, merma…">
     <button class="btn cel" style="width:100%;margin-top:12px">Guardar</button></form>`);
 }
+function lcList(q) {
+  q = (q || '').toLowerCase();
+  const res = S.db.clients.filter(c => !q || (c.name + ' ' + c.user + ' ' + (c.phone || '') + ' ' + c.cardNo).toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 6);
+  return res.length ? res.map(c => `<button type="button" class="crow" data-act="lcpick" data-id="${c.id}"><span>${esc(c.name)}<small class="muted"> ${esc(c.cardNo)}${c.phone ? ' · ' + esc(c.phone) : ''}</small></span><b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b></button>`).join('') : '<div class="empty">Sin resultados</div>';
+}
+const lcSel = c => `<b>${esc(c.name)}</b> · ${esc(c.cardNo)} · saldo en tarjeta <b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b> <button type="button" class="btn sm ghost" data-act="lcchange" style="margin-left:6px">Cambiar</button>`;
+function updCardHint() {
+  const f = $('form[data-form=laynew]'); if (!f) return;
+  const c = client(f.elements.cid.value);
+  const av = c ? Math.max(0, balance(c.id) - reserved(c.id)) : 0;
+  const hint = $('#payhint'), radio = f.querySelector('input[name=method][value=tarjeta]');
+  hint.dataset.card = c ? (av > 0 ? `Se descuenta de la tarjeta de ${c.name} (disponible ${COP(av)}). El cliente debe confirmarlo con su clave desde su cuenta.` : `${c.name} no tiene saldo disponible en la tarjeta.`) : 'Elige primero un cliente.';
+  radio.disabled = !(c && av > 0);
+  if (radio.disabled && radio.checked) { f.querySelector('input[name=method][value=efectivo]').checked = true; $('#refbox').hidden = true; hint.textContent = S.db.settings.cash; }
+  else if (radio.checked) hint.textContent = hint.dataset.card;
+}
+function updLay() {
+  const f = $('form[data-form=laynew]'); if (!f) return;
+  let s = 0, n = 0;
+  f.querySelectorAll('.qty').forEach(i => { const q = Math.floor(+i.value) || 0; if (q > 0) { s += q * +i.dataset.price; n += q; } });
+  const ab = Math.max(0, Math.round(+f.elements.amount.value || 0));
+  $('#tot').textContent = COP(s);
+  $('#cnt').textContent = n ? n + (n === 1 ? ' unidad' : ' unidades') : 'sin productos';
+  f.elements.amount.max = s || '';
+  $('#lsaldo').innerHTML = s ? (ab > s ? '<span class="neg">El abono supera el total.</span>' : `Saldo después del abono: <b>${COP(s - ab)}</b>`) : '';
+}
 function openLayNew(cid) {
   if (!S.db.clients.length) return toast('Primero crea un cliente');
   const prods = S.db.products.filter(p => p.active && stockState(p) !== 'out');
   const cats = [...new Set(prods.map(p => p.cat))];
-  const clients = [...S.db.clients].sort((a, b) => a.name.localeCompare(b.name));
+  const pre = cid && client(cid);
   modal('Nuevo apartado', `<form data-form="laynew" data-optref>
-    <label>Cliente</label><select name="cid" required>${clients.map(c => `<option value="${c.id}" ${c.id === cid ? 'selected' : ''}>${esc(c.name)} · ${esc(c.cardNo)}</option>`).join('')}</select>
+    <label>Cliente</label>
+    <input type="hidden" name="cid" value="${pre ? pre.id : ''}">
+    <div id="lcsel" class="hint" style="margin-top:0" ${pre ? '' : 'hidden'}>${pre ? lcSel(pre) : ''}</div>
+    <div id="lcbox" ${pre ? 'hidden' : ''}><input data-lcsearch type="search" placeholder="Buscar cliente por nombre, usuario, teléfono o tarjeta" autocomplete="off"><div class="clist" id="lclist">${lcList('')}</div></div>
     ${cats.map(cat => `<div class="cat">${esc(cat)}</div>${prods.filter(p => p.cat === cat).map(p =>
       `<div class="prow"><div class="n">${esc(p.name)}<div class="muted">${COP(p.price)}${tracked(p) ? ' · ' + p.stock + ' disp.' : ''}</div></div>
-      <input class="qty" type="number" min="0" value="0" name="q_${p.id}" data-price="${p.price}" aria-label="Cantidad ${esc(p.name)}"></div>`).join('')}`).join('')}
-    <div class="total">Total: <span id="tot">${COP(0)}</span></div>
+      <input class="qty" type="number" min="0" ${tracked(p) ? `max="${p.stock}"` : ''} value="0" name="q_${p.id}" data-price="${p.price}" aria-label="Cantidad ${esc(p.name)}"></div>`).join('')}`).join('')}
     <div class="row"><div><label>Fecha de entrega</label><input type="date" name="due" required min="${todayStr()}"></div>
     <div><label>Abono inicial (COP, opcional)</label><input name="amount" type="number" min="0" step="1" value="0"></div></div>
+    <div id="lsaldo" class="muted" style="margin-top:4px"></div>
     <label>Método del abono</label>
     <div class="radio"><label><input type="radio" name="method" value="efectivo" checked> 💵 Efectivo</label>
-    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label></div>
+    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label>
+    <label><input type="radio" name="method" value="tarjeta"> 💳 Tarjeta de regalo</label></div>
     <div class="hint" id="payhint">${esc(S.db.settings.cash)}</div>
     <div id="refbox" hidden><label>Referencia / comprobante de la transferencia</label><input name="ref"></div>
     <label>Nota (opcional)</label><input name="note" placeholder="Ej. para el cumpleaños de Sofía">
     <p class="muted">Los precios quedan fijos al crear el apartado y el stock se reserva desde ahora.</p>
-    <button class="btn gold" style="width:100%">Crear apartado</button></form>`);
+    <div class="sticky-foot"><div class="total" style="margin:0">Total: <span id="tot">${COP(0)}</span> <small class="muted" id="cnt">sin productos</small></div>
+      <button class="btn gold">Crear apartado</button></div></form>`);
+  updCardHint(); updLay();
 }
 function openLayAbono(id) {
   const l = layById(id); if (!l) return;
-  const c = client(l.clientId), due = layDue(l);
+  const c = client(l.clientId), open = layOpen(l), av = c ? Math.max(0, balance(c.id) - reserved(c.id)) : 0;
+  if (open <= 0) return toast('No falta nada por abonar');
+  const cardMsg = av > 0 ? `Se descuenta de la tarjeta (disponible ${COP(av)}). El cliente debe confirmarlo con su clave desde su cuenta.` : 'El cliente no tiene saldo disponible en la tarjeta.';
   modal('Abonar · ' + esc(c ? c.name : ''), `<form data-form="layabono" data-id="${id}">
-    <div class="hint">Total ${COP(l.total)} · Abonado ${COP(layPaid(l))} · <b>Saldo ${COP(due)}</b></div>
-    <label>Monto del abono (COP)</label><input name="amount" type="number" min="1" max="${due}" step="1" required>
-    <div class="chips"><button type="button" class="btn sm ghost" data-act="amt" data-v="${due}">Pagar el saldo (${COP(due)})</button></div>
+    <div class="hint">Total ${COP(l.total)} · Abonado ${COP(layPaid(l))}${layPend(l) ? ' · Por confirmar ' + COP(layPend(l)) : ''} · <b>Falta ${COP(open)}</b></div>
+    <label>Monto del abono (COP)</label><input name="amount" type="number" min="1" max="${open}" step="1" required>
+    <div class="chips"><button type="button" class="btn sm ghost" data-act="amt" data-v="${open}">Pagar lo que falta (${COP(open)})</button>
+      ${av > 0 ? `<button type="button" class="btn sm ghost" data-act="amtcard" data-v="${Math.min(open, av)}">Usar saldo de la tarjeta (${COP(Math.min(open, av))})</button>` : ''}</div>
     <label>Método de pago</label>
     <div class="radio"><label><input type="radio" name="method" value="efectivo" checked> 💵 Efectivo</label>
-    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label></div>
-    <div class="hint" id="payhint">${esc(S.db.settings.cash)}</div>
+    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label>
+    <label><input type="radio" name="method" value="tarjeta" ${av > 0 ? '' : 'disabled'}> 💳 Tarjeta de regalo</label></div>
+    <div class="hint" id="payhint" data-card="${esc(cardMsg)}">${esc(S.db.settings.cash)}</div>
     <div id="refbox" hidden><label>Referencia / comprobante de la transferencia</label><input name="ref"></div>
     <label>Nota (opcional)</label><input name="note">
     <button class="btn ok" style="width:100%;margin-top:12px">Registrar abono</button></form>`);
 }
+function openConfirmAbono(lid, aid) {
+  const l = layById(lid), a = l && (l.abonos || []).find(x => x.id === aid);
+  if (!l || !a || a.voided || abSt(a) !== 'pendiente' || l.clientId !== S.me.cid) return toast('Este abono ya no está pendiente');
+  modal('Confirmar abono con tu tarjeta', `<form data-form="confirmabono" data-id="${lid}" data-aid="${aid}">
+    <div class="total" style="text-align:left">−${COP(a.amount)}</div>
+    <p class="muted">Abono al apartado: ${itemsText(l.items)}<br>Entrega: ${fday(l.dueDate)} · Total ${COP(l.total)} · Abonado ${COP(layPaid(l))}</p>
+    ${a.note ? `<p class="muted">Nota: ${esc(a.note)}</p>` : ''}
+    <label>Escribe tu clave para confirmar</label><input type="password" name="pass" autocomplete="current-password" required>
+    <div class="row" style="margin-top:12px"><button class="btn ok">Confirmar</button>
+    <button type="button" class="btn red" data-act="layreject" data-id="${lid}" data-aid="${aid}">Rechazar</button></div></form>`);
+}
 function openLayDetail(id) {
   const l = layById(id); if (!l) return;
-  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), active = l.status === 'activo';
+  const adm = S.me.role === 'admin';
+  if (!adm && l.clientId !== S.me.cid) return;
+  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), pend = layPend(l), open = layOpen(l), active = l.status === 'activo';
   const st = {activo:'Activo', entregado:'Entregado', cancelado:'Cancelado'}[l.status];
+  const abLine = a => {
+    const s = abSt(a);
+    const tag = a.voided ? ' <i>(anulado)</i>' : a.refunded ? ' <i>(devuelto a la tarjeta)</i>' : s === 'pendiente' ? ' <i>(por confirmar)</i>' : s === 'rechazada' ? ' <i>(rechazado)</i>' : '';
+    const dead = a.voided || a.refunded || s === 'rechazada';
+    const canVoid = adm && active && !dead;
+    return `<div class="tl"><span>${fdate(a.created)} · ${methodName(a.method)}${a.ref ? ' · ' + esc(a.ref) : ''}${a.note ? ' · ' + esc(a.note) : ''}${tag}</span><span>${dead ? '<s>' + COP(a.amount) + '</s>' : COP(a.amount)}${canVoid ? ` <button class="btn sm ghost noprint" data-act="layvoid" data-id="${l.id}" data-aid="${a.id}">Anular</button>` : ''}</span></div>`;
+  };
   modal('Apartado · ' + esc(c ? c.name : 'cliente eliminado'), `<div class="ticket"><div style="text-align:center"><b>🌭 CHORILAB</b><br><span class="muted">Comprobante de apartado · #${esc(l.id)}</span></div>
     <hr><div class="tl"><span>Cliente</span><span>${esc(c ? c.name : '—')}</span></div>
     <div class="tl"><span>Entrega</span><b>${fday(l.dueDate)}</b></div><div class="tl"><span>Estado</span><span>${st}</span></div><hr>
     ${l.items.map(i => `<div class="tl"><span>${i.qty}× ${esc(i.name)}</span><span>${COP(i.qty * i.price)}</span></div>`).join('')}<hr>
-    <div class="tl"><b>Total</b><b>${COP(l.total)}</b></div><div class="tl"><span>Abonado</span><span>${COP(paid)}</span></div><div class="tl"><b>Saldo</b><b>${COP(due)}</b></div>
+    <div class="tl"><b>Total</b><b>${COP(l.total)}</b></div><div class="tl"><span>Abonado</span><span>${COP(paid)}</span></div>
+    ${pend ? `<div class="tl"><span>Por confirmar</span><span>${COP(pend)}</span></div>` : ''}
+    ${l.status === 'cancelado' ? '' : `<div class="tl"><b>Saldo</b><b>${COP(due)}</b></div>`}
     <hr><div class="muted">Abonos</div>
-    ${(l.abonos || []).length ? l.abonos.map(a => `<div class="tl"><span>${fdate(a.created)} · ${methodName(a.method)}${a.ref ? ' · ' + esc(a.ref) : ''}${a.note ? ' · ' + esc(a.note) : ''}</span><span>${a.voided ? '<s>' + COP(a.amount) + '</s> anulado' : COP(a.amount)}${active && !a.voided ? ` <button class="btn sm ghost noprint" data-act="layvoid" data-id="${l.id}" data-aid="${a.id}">Anular</button>` : ''}</span></div>`).join('') : '<div class="muted">Sin abonos todavía.</div>'}
+    ${(l.abonos || []).length ? l.abonos.map(abLine).join('') : '<div class="muted">Sin abonos todavía.</div>'}
+    ${l.status === 'cancelado' ? `<hr><div class="muted">${l.refundCard ? '↩ ' + COP(l.refundCard) + ' devueltos al saldo de la tarjeta.<br>' : ''}${l.refundDue ? (l.refundDone ? 'Devueltos ' + COP(l.refundDue) + ' al cliente (efectivo/transferencia).' : 'Pendiente devolver ' + COP(l.refundDue) + ' al cliente (efectivo/transferencia).') : ''}</div>` : ''}
     ${l.note ? `<hr><div class="muted">Nota: ${esc(l.note)}</div>` : ''}</div>
-    ${active ? `<form data-form="laydue" data-id="${id}" class="row noprint" style="margin-top:12px"><div><label>Cambiar fecha de entrega</label><input type="date" name="due" value="${esc(l.dueDate)}" required></div><div class="fit"><button class="btn sm cel">Guardar fecha</button></div></form>` : ''}
+    ${adm && active ? `<form data-form="laydue" data-id="${id}" class="row noprint" style="margin-top:12px"><div><label>Cambiar fecha de entrega</label><input type="date" name="due" value="${esc(l.dueDate)}" min="${todayStr()}" required></div><div class="fit"><button class="btn sm cel">Guardar fecha</button></div></form>` : ''}
     <div class="row noprint" style="margin-top:12px">
-      ${active && due > 0 ? `<button class="btn ok fit" data-act="layabono" data-id="${id}">Abonar</button>` : ''}
-      ${active && due === 0 ? `<button class="btn cel fit" data-act="laydeliver" data-id="${id}">Marcar entregado</button>` : ''}
+      ${adm && active && open > 0 ? `<button class="btn ok fit" data-act="layabono" data-id="${id}">Abonar</button>` : ''}
+      ${adm && active && due === 0 ? `<button class="btn cel fit" data-act="laydeliver" data-id="${id}">Marcar entregado</button>` : ''}
+      ${adm && l.status === 'cancelado' && l.refundDue && !l.refundDone ? `<button class="btn ok fit" data-act="layrefund" data-id="${id}">Marcar devuelto</button>` : ''}
       <button class="btn gold fit" data-act="print">🖨 Imprimir</button>
-      ${active ? `<button class="btn red fit" data-act="laycancel" data-id="${id}">Cancelar apartado</button>` : ''}</div>
-    ${active && due > 0 ? '<p class="muted noprint">Para entregar, primero cobra el saldo pendiente con un abono.</p>' : ''}`);
+      ${adm && active ? `<button class="btn red fit" data-act="laycancel" data-id="${id}">Cancelar apartado</button>` : ''}</div>
+    ${adm && active && due > 0 ? '<p class="muted noprint">Para entregar, primero cobra el saldo pendiente con un abono.</p>' : ''}`);
 }
 function openTicket(id) {
   const t = S.db.tx.find(x => x.id === id); if (!t) return;
@@ -794,9 +885,7 @@ async function checkout() {
     let cardPart = total; topup = 0;
     if (tarjeta) {
       if (!st.db.clients.some(c => c.id === cid)) return 'El cliente ya no existe';
-      const bal = st.db.tx.filter(t => t.clientId === cid && t.status === 'confirmada').reduce((s, t) => s + (t.type === 'recharge' ? t.amount : -t.amount), 0);
-      const res = st.db.tx.filter(t => t.clientId === cid && t.status === 'pendiente' && t.type === 'use').reduce((s, t) => s + t.amount, 0);
-      const av = bal - res;
+      const av = balOf(st.db, cid) - resOf(st.db, cid);
       if (av <= 0) return 'La tarjeta no tiene saldo disponible. Cobra el pedido en Mostrador.';
       cardPart = Math.min(total, av); topup = total - cardPart;
     }
@@ -881,7 +970,7 @@ const forms = {
       const t = st.db.tx.find(x => x.id === id && x.clientId === S.me.cid);
       if (!t || t.status !== 'pendiente') return 'Este movimiento ya no está pendiente';
       if (t.type === 'use') {
-        const bal = st.db.tx.filter(x => x.clientId === t.clientId && x.status === 'confirmada').reduce((s, x) => s + (x.type === 'recharge' ? x.amount : -x.amount), 0);
+        const bal = balOf(st.db, t.clientId);
         if (t.amount > bal) return 'Saldo insuficiente';
       }
       t.status = 'confirmada'; t.resolved = Date.now();
@@ -929,6 +1018,7 @@ const forms = {
   },
   async laynew(f, d) {
     const cid = d.get('cid'), due = d.get('due'), note = (d.get('note') || '').trim();
+    if (!cid || !client(cid)) return toast('Elige el cliente del apartado');
     const items = []; let total = 0;
     S.db.products.forEach(p => { const q = Math.floor(+d.get('q_' + p.id) || 0); if (q > 0) { items.push({id:p.id, name:p.name, qty:q, price:p.price}); total += q * p.price; } });
     if (!items.length) return toast('Selecciona al menos un producto');
@@ -937,6 +1027,7 @@ const forms = {
     const amount = Math.max(0, Math.round(+d.get('amount') || 0)), method = d.get('method'), ref = (d.get('ref') || '').trim();
     if (amount > total) return toast('El abono no puede ser mayor al total (' + COP(total) + ')');
     if (amount > 0 && method === 'transferencia' && !ref) return toast('Indica la referencia de la transferencia');
+    const card = amount > 0 && method === 'tarjeta';
     const err = await mutate(st => {
       if (!st.db.clients.some(c => c.id === cid)) return 'El cliente ya no existe';
       for (const it of items) {
@@ -944,30 +1035,47 @@ const forms = {
         if (!p) return 'Producto ya no disponible: ' + it.name;
         if (tracked(p) && p.stock < it.qty) return `Stock insuficiente de ${p.name} (quedan ${p.stock})`;
       }
+      if (card) { const av = balOf(st.db, cid) - resOf(st.db, cid); if (amount > av) return 'Saldo insuficiente en la tarjeta (disponible ' + COP(Math.max(0, av)) + ')'; }
       items.forEach(it => { const p = st.db.products.find(x => x.id === it.id); if (tracked(p)) p.stock -= it.qty; });
       const now = Date.now();
       st.db.layaways.push({id:uid(), clientId:cid, items, total, dueDate:due, note, status:'activo', created:now,
-        abonos: amount ? [{id:uid(), amount, method, ref, note:'Abono inicial', created:now}] : []});
+        abonos: amount ? [{id:uid(), amount, method, ref, note:'Abono inicial', created:now, ...(card ? {status:'pendiente'} : {})}] : []});
     });
     if (err) return toast(err);
-    closeModal(); render(); toast('Apartado creado');
+    closeModal(); render(); toast(card ? 'Apartado creado: el abono con tarjeta queda pendiente de confirmación del cliente' : 'Apartado creado');
   },
   async layabono(f, d) {
     const amount = Math.round(+d.get('amount')), method = d.get('method'), ref = (d.get('ref') || '').trim(), note = (d.get('note') || '').trim();
     if (!(amount > 0)) return toast('Monto inválido');
     if (method === 'transferencia' && !ref) return toast('Indica la referencia de la transferencia');
+    const card = method === 'tarjeta';
     const err = await mutate(st => {
       const l = st.db.layaways.find(x => x.id === f.dataset.id);
       if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
-      const paid = (l.abonos || []).filter(a => !a.voided).reduce((s, a) => s + a.amount, 0);
-      if (amount > l.total - paid) return 'El abono supera el saldo (' + COP(l.total - paid) + ')';
-      l.abonos.push({id:uid(), amount, method, ref, note, created:Date.now()});
+      const ab = l.abonos || [];
+      const open = l.total - sumA(ab.filter(abOk)) - sumA(ab.filter(a => !a.voided && abSt(a) === 'pendiente'));
+      if (amount > open) return 'El abono supera lo que falta (' + COP(Math.max(0, open)) + ')';
+      if (card) { const av = balOf(st.db, l.clientId) - resOf(st.db, l.clientId); if (amount > av) return 'Saldo insuficiente en la tarjeta (disponible ' + COP(Math.max(0, av)) + ')'; }
+      l.abonos.push({id:uid(), amount, method, ref, note, created:Date.now(), ...(card ? {status:'pendiente'} : {})});
     });
     if (err) return toast(err);
-    closeModal(); render(); toast('Abono registrado');
+    closeModal(); render(); toast(card ? 'Abono enviado: queda pendiente de confirmación del cliente' : 'Abono registrado');
+  },
+  async confirmabono(f, d) {
+    if (!(await checkPass(d.get('pass') || ''))) return toast('Clave incorrecta');
+    const err = await mutate(st => {
+      const l = st.db.layaways.find(x => x.id === f.dataset.id && x.clientId === S.me.cid);
+      const a = l && l.status === 'activo' && l.abonos.find(x => x.id === f.dataset.aid);
+      if (!a || a.voided || abSt(a) !== 'pendiente') return 'Este abono ya no está pendiente';
+      if (a.amount > balOf(st.db, l.clientId)) return 'Saldo insuficiente';
+      a.status = 'confirmada'; a.confirmedAt = Date.now();
+    });
+    if (err) return toast(err);
+    closeModal(); render(); toast('Abono confirmado ✅');
   },
   async laydue(f, d) {
     const due = d.get('due'); if (!due) return toast('Indica la fecha');
+    if (due < todayStr()) return toast('La fecha de entrega no puede ser anterior a hoy');
     const err = await mutate(st => {
       const l = st.db.layaways.find(x => x.id === f.dataset.id);
       if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
@@ -1032,12 +1140,31 @@ document.addEventListener('click', e => {
   else if (a === 'laynew') openLayNew(id);
   else if (a === 'layabono') openLayAbono(id);
   else if (a === 'laydetail') openLayDetail(id);
+  else if (a === 'confirmabono') openConfirmAbono(id, b.dataset.aid);
+  else if (a === 'layreject') {
+    const aid = b.dataset.aid;
+    run(async () => {
+      const err = await mutate(st => {
+        const l = st.db.layaways.find(x => x.id === id && x.clientId === S.me.cid);
+        const ab = l && l.status === 'activo' && l.abonos.find(x => x.id === aid);
+        if (!ab || ab.voided || abSt(ab) !== 'pendiente') return 'Este abono ya no está pendiente';
+        ab.status = 'rechazada'; ab.resolved = Date.now();
+      });
+      if (err) return toast(err);
+      closeModal(); render(); toast('Abono rechazado');
+    });
+  }
+  else if (a === 'lcpick') {
+    const c = client(id), f = $('form[data-form=laynew]'); if (!c || !f) return;
+    f.elements.cid.value = id; $('#lcsel').innerHTML = lcSel(c); $('#lcsel').hidden = false; $('#lcbox').hidden = true; updCardHint();
+  }
+  else if (a === 'lcchange') { $('#lcbox').hidden = false; $('#lcsel').hidden = true; const i = $('[data-lcsearch]'); if (i) i.focus(); }
   else if (a === 'laydeliver') {
     if (confirm('¿Marcar este apartado como entregado?')) run(async () => {
       const err = await mutate(st => {
         const l = st.db.layaways.find(x => x.id === id);
         if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
-        const paid = (l.abonos || []).filter(x => !x.voided).reduce((s, x) => s + x.amount, 0);
+        const paid = sumA((l.abonos || []).filter(abOk));
         if (paid < l.total) return 'Aún hay saldo pendiente: ' + COP(l.total - paid);
         l.status = 'entregado'; l.delivered = Date.now();
       });
@@ -1047,25 +1174,52 @@ document.addEventListener('click', e => {
   }
   else if (a === 'laycancel') {
     const l = layById(id); if (!l) return;
-    const paid = layPaid(l);
-    if (confirm('¿Cancelar este apartado? El stock reservado vuelve al inventario.' + (paid ? ' El cliente tiene ' + COP(paid) + ' abonados: devuélveselos aparte (quedan registrados en el historial).' : ''))) run(async () => {
+    const back = sumA((l.abonos || []).filter(x => x.method === 'tarjeta' && abOk(x) && !x.refunded));
+    const other = sumA((l.abonos || []).filter(x => x.method !== 'tarjeta' && abOk(x)));
+    let msg = '¿Cancelar este apartado? El stock reservado vuelve al inventario.';
+    if (back) msg += ' ' + COP(back) + ' pagados con la tarjeta vuelven al saldo de la tarjeta automáticamente.';
+    if (other) msg += ' ' + COP(other) + ' abonados en efectivo/transferencia debes devolverlos al cliente (queda como devolución pendiente).';
+    if (confirm(msg)) run(async () => {
       const err = await mutate(st => {
         const x = st.db.layaways.find(y => y.id === id);
         if (!x || x.status !== 'activo') return 'Este apartado ya no está activo';
-        restock(st.db, x.items); x.status = 'cancelado'; x.cancelled = Date.now();
+        const now = Date.now(); let cardBack = 0, cashBack = 0;
+        (x.abonos || []).forEach(ab => {
+          if (ab.voided) return;
+          if (ab.method === 'tarjeta') {
+            if (abSt(ab) === 'confirmada') { ab.refunded = true; ab.refundedAt = now; cardBack += ab.amount; }
+            else if (abSt(ab) === 'pendiente') { ab.status = 'rechazada'; ab.resolved = now; }
+          } else if (abSt(ab) === 'confirmada') cashBack += ab.amount;
+        });
+        restock(st.db, x.items);
+        x.status = 'cancelado'; x.cancelled = now; x.refundCard = cardBack; x.refundDue = cashBack; x.refundDone = false;
       });
       if (err) return toast(err);
-      closeModal(); render(); toast('Apartado cancelado');
+      ui.lfilter = 'todos'; closeModal(); render(); toast('Apartado cancelado: sigue en la lista como "Cancelado"');
+    });
+  }
+  else if (a === 'layrefund') {
+    const l = layById(id); if (!l) return;
+    if (confirm('¿Ya le devolviste ' + COP(l.refundDue) + ' al cliente?')) run(async () => {
+      const err = await mutate(st => {
+        const x = st.db.layaways.find(y => y.id === id);
+        if (!x || x.status !== 'cancelado' || !x.refundDue || x.refundDone) return 'No hay una devolución pendiente';
+        x.refundDone = true; x.refundedAt = Date.now();
+      });
+      if (err) return toast(err);
+      closeModal(); render(); toast('Devolución registrada');
     });
   }
   else if (a === 'layvoid') {
-    const aid = b.dataset.aid;
-    if (confirm('¿Anular este abono? Quedará marcado como anulado en el historial.')) run(async () => {
+    const aid = b.dataset.aid, l = layById(id), ab = l && (l.abonos || []).find(x => x.id === aid);
+    if (!ab) return;
+    const msg = '¿Anular este abono? Quedará marcado como anulado en el historial.' + (ab.method === 'tarjeta' && abSt(ab) === 'confirmada' ? ' Los ' + COP(ab.amount) + ' vuelven al saldo de la tarjeta.' : '');
+    if (confirm(msg)) run(async () => {
       const err = await mutate(st => {
         const x = st.db.layaways.find(y => y.id === id);
-        const ab = x && x.status === 'activo' && x.abonos.find(z => z.id === aid);
-        if (!ab || ab.voided) return 'Abono no encontrado';
-        ab.voided = true; ab.voidedAt = Date.now();
+        const z = x && x.status === 'activo' && x.abonos.find(w => w.id === aid);
+        if (!z || z.voided || z.refunded || abSt(z) === 'rechazada') return 'Abono no encontrado';
+        z.voided = true; z.voidedAt = Date.now();
       });
       if (err) return toast(err);
       render(); openLayDetail(id);
@@ -1074,6 +1228,10 @@ document.addEventListener('click', e => {
   else if (a === 'ticket') openTicket(id);
   else if (a === 'print') window.print();
   else if (a === 'amt') { const i = $('input[name=amount]'); if (i) i.value = b.dataset.v; }
+  else if (a === 'amtcard') {
+    const i = $('input[name=amount]'); if (i) i.value = b.dataset.v;
+    const r = $('input[name=method][value=tarjeta]'); if (r && !r.disabled) { r.checked = true; r.dispatchEvent(new Event('change', {bubbles:true})); }
+  }
   /* caja */
   else if (a === 'add') addToCart(id, 1);
   else if (a === 'cinc') addToCart(id, 1);
@@ -1127,6 +1285,8 @@ document.addEventListener('input', e => {
   else if (t.matches('[data-lsearch]')) { ui.lq = t.value; render(); refocus('[data-lsearch]'); }
   else if (t.matches('[data-psearch]')) { ui.pq = t.value; render(); refocus('[data-psearch]'); }
   else if (t.matches('[data-pcsearch]')) { ui.pcq = t.value; render(); refocus('[data-pcsearch]'); }
+  else if (t.matches('[data-lcsearch]')) { const l = $('#lclist'); if (l) l.innerHTML = lcList(t.value); }
+  else if (t.classList.contains('qty') || (t.name === 'amount' && t.form && t.form.dataset.form === 'laynew')) updLay();
   else if (t.id === 'recv') { ui.precv = t.value; const c = $('#chg'); if (c) c.innerHTML = changeText(cashDue()); }
   else if (t.id === 'pnote') ui.pnote = t.value;
 });
@@ -1138,8 +1298,8 @@ document.addEventListener('change', e => {
   if (t.matches('[data-csort]')) { ui.csort = t.value; render(); }
   if (t.matches('[data-lfilter]')) { ui.lfilter = t.value; render(); }
   if (t.name === 'method') {
-    const tr = t.value === 'transferencia';
-    $('#refbox').hidden = !tr; $('#payhint').textContent = tr ? S.db.settings.bank : S.db.settings.cash;
+    const tr = t.value === 'transferencia', tj = t.value === 'tarjeta', h = $('#payhint');
+    $('#refbox').hidden = !tr; h.textContent = tj ? (h.dataset.card || '') : tr ? S.db.settings.bank : S.db.settings.cash;
     { const rb = $('#refbox input'); if (rb) rb.required = tr && !t.form.hasAttribute('data-optref'); }
   }
   if (t.matches('[data-import]') && t.files[0]) {
@@ -1156,6 +1316,12 @@ document.addEventListener('change', e => {
   }
 });
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  else if (e.key === 'Enter' && e.target.matches) {
+    if (e.target.matches('[data-lcsearch]')) { e.preventDefault(); const b = $('#lclist .crow'); if (b) b.click(); }
+    else if (e.target.matches('form[data-form=laynew] .qty')) e.preventDefault();
+  }
+});
 boot();
 })();

@@ -11,7 +11,7 @@ Web estática para GitHub Pages. Los datos se cifran en el navegador (AES-GCM 25
 - **Menú**: el administrador lo edita (nombre, descripción, precio, categoría, visible/oculto). Los clientes lo ven en su pestaña "Menú" y se actualiza solo (cada 15 s o con ↻ Actualizar). Los productos agotados se marcan.
 - **Inventario**: stock por producto (opcional), alerta de stock bajo, entradas, mermas y conteos con historial. Las ventas descuentan stock y se devuelve al rechazar o anular.
 - **Clientes**: búsqueda, orden por saldo o última visita, ficha con totales, ticket promedio, notas internas y edición.
-- **Apartados**: cada apartado se asocia a un cliente, con productos, abonos (efectivo o transferencia), saldo y fecha de entrega. El stock se reserva al crearlo; se entrega cuando el saldo llega a $0 y se puede cancelar (el stock vuelve). El cliente los ve en "Mis apartados". Hay comprobante imprimible.
+- **Apartados**: cada apartado se asocia a un cliente, con productos, abonos (efectivo, transferencia o saldo de la tarjeta de regalo, que el cliente confirma con su clave), saldo y fecha de entrega. El stock se reserva al crearlo; se entrega cuando el saldo llega a $0 y se puede cancelar (el stock vuelve; lo pagado con tarjeta regresa al saldo y lo pagado en caja queda como devolución pendiente). Los cancelados siguen en la lista. El cliente los ve en "Mis apartados". Hay comprobante imprimible.
 - **Resumen**: ventas del día, ticket promedio, más vendidos y alertas de inventario.
 
 ## Puesta en marcha
