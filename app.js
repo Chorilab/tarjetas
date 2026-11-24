@@ -68,19 +68,25 @@ async function insertRev(rev, data) {
 const defaults = () => ({
   settings: {
     bank: 'Transferencia a Nequi / Bancolombia: (escribe aquí tus datos de pago)',
-    cash: 'Pago en efectivo directamente en CHORILAB.'
+    cash: 'Pago en efectivo directamente en CHORILAB.',
+    tag: 'Embutidos artesanales de calidad. Chorizo de 21 cm, pan de masa madre y chimichurri hecho en casa.',
+    catSubs: {
+      'Para la casa': 'Para llevar y armar los choripanes en tu mesa.',
+      'Para comer aquí': 'Combos para disfrutar en el restaurante.',
+      'Bebidas': 'Sueltas, para sumar a cualquier pedido.'
+    }
   },
   products: [
-    {id:'c4', cat:'Combos para la casa', name:'Choripán x4', price:30000},
-    {id:'c6', cat:'Combos para la casa', name:'Choripán x6', price:45000},
-    {id:'r1', cat:'Combos en el restaurante', name:'Combo Personal', price:18000},
-    {id:'r2', cat:'Combos en el restaurante', name:'Combo Pareja', price:34000},
-    {id:'r3', cat:'Combos en el restaurante', name:'Combo Trío', price:48000},
-    {id:'r4', cat:'Combos en el restaurante', name:'Combo Parche', price:80000},
-    {id:'r5', cat:'Combos en el restaurante', name:'Combo Familiar', price:110000},
-    {id:'b1', cat:'Bebidas', name:'Gaseosa', price:5000},
-    {id:'b2', cat:'Bebidas', name:'Jugo natural', price:7000},
-    {id:'b3', cat:'Bebidas', name:'Cerveza', price:8000}
+    {id:'c4', cat:'Para la casa', name:'Combo Choripán x4', price:30000, desc:'4 chorizos 21 cm\n4 panes de masa madre\n1 chimichurri artesanal'},
+    {id:'c6', cat:'Para la casa', name:'Combo Choripán x6', price:45000, desc:'6 chorizos 21 cm\n6 panes de masa madre\n2 chimichurri artesanal'},
+    {id:'r1', cat:'Para comer aquí', name:'Combo Personal', price:18000, desc:'1 choripán clásico\n1 gaseosa sin azúcar 250 mL'},
+    {id:'r2', cat:'Para comer aquí', name:'Combo Pareja', price:32500, desc:'2 choripanes clásicos\n2 gaseosas sin azúcar 250 mL'},
+    {id:'r3', cat:'Para comer aquí', name:'Combo Trío', price:39000, desc:'3 choripanes clásicos'},
+    {id:'r4', cat:'Para comer aquí', name:'Combo Parche', price:60000, desc:'4 choripanes clásicos\n4 gaseosas sin azúcar 250 mL'},
+    {id:'r5', cat:'Para comer aquí', name:'Combo Familiar', price:60000, desc:'5 choripanes clásicos'},
+    {id:'b1', cat:'Bebidas', name:'Gaseosa sin azúcar', price:3000, desc:'250 mL'},
+    {id:'b2', cat:'Bebidas', name:'Gaseosa sin azúcar', price:5000, desc:'400 mL'},
+    {id:'b3', cat:'Bebidas', name:'Agua', price:3000, desc:'600 mL'}
   ],
   clients: [],
   tx: [],
@@ -89,6 +95,7 @@ const defaults = () => ({
 /* Completa campos nuevos en bases creadas con versiones anteriores. */
 function normalize(db) {
   db.settings = db.settings || {}; db.settings.bank ??= ''; db.settings.cash ??= '';
+  db.settings.tag ??= 'Embutidos artesanales de calidad. Chorizo de 21 cm, pan de masa madre y chimichurri hecho en casa.'; db.settings.catSubs ??= {};
   db.products = db.products || []; db.clients = db.clients || []; db.tx = db.tx || []; db.stockLog = db.stockLog || [];
   db.products.forEach(p => {
     if (p.active === undefined) p.active = true;
@@ -102,7 +109,7 @@ function normalize(db) {
 let S = {rev:0, users:{}, db:null, dek:null, kb64:null, me:null};
 const ui = {
   view:'loading', tab:'caja', ctab:'tarjeta', filter:'todas', tfilter:'todos', q:'', csort:'name', busy:false, dirty:false, error:'',
-  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:''
+  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false
 };
 
 const client = id => S.db.clients.find(c => c.id === id);
@@ -167,7 +174,7 @@ async function boot() {
 function logout(msg) {
   clearInterval(startPolling.t);
   S = {rev:0, users:{}, db:null, dek:null, kb64:null, me:null};
-  ui.view = 'login'; ui.tab = 'caja'; ui.ctab = 'tarjeta'; ui.q = ''; ui.pq = ''; ui.pcat = 'todas'; ui.pmode = 'mostrador'; resetCart(); closeModal(); render();
+  ui.view = 'login'; ui.tab = 'caja'; ui.ctab = 'tarjeta'; ui.q = ''; ui.pq = ''; ui.pcat = 'todas'; ui.pmode = 'mostrador'; ui.mcart = {}; ui.mopen = false; ui.mpreview = false; resetCart(); closeModal(); render();
   if (msg) toast(msg);
 }
 function startPolling() {
@@ -251,36 +258,51 @@ function adminCaja() {
     </section>
     <aside class="pos-r card">${cartPanel()}</aside></div>`;
 }
+function cashDue() {
+  const total = cartTotal();
+  if (ui.pmode !== 'tarjeta') return total;
+  const c = ui.pclient && client(ui.pclient);
+  return c ? Math.max(0, total - Math.max(0, balance(c.id) - reserved(c.id))) : 0;
+}
+const methodSeg = () => `<div class="seg">${['efectivo', 'transferencia'].map(m => `<button class="${ui.pmethod===m?'on':''}" data-act="pmethod" data-v="${m}">${m==='efectivo'?'💵 Efectivo':'🏦 Transferencia'}</button>`).join('')}</div>`;
+const payBox = due => ui.pmethod === 'efectivo'
+  ? `<label>Recibido (opcional)</label><input id="recv" inputmode="numeric" value="${esc(ui.precv)}" placeholder="Ej. 50000"><div id="chg" class="muted" style="margin-top:4px">${changeText(due)}</div>`
+  : `<div class="hint">${esc(S.db.settings.bank)}</div>`;
 function cartPanel() {
   const lines = cartLines(), total = cartTotal(), tarjeta = ui.pmode === 'tarjeta';
-  let who;
+  let who = '', split = '', blocked = false, due = 0;
   if (tarjeta) {
     const c = ui.pclient && client(ui.pclient);
     if (c) {
-      const av = balance(c.id) - reserved(c.id);
-      who = `<div class="hint"><b>${esc(c.name)}</b> · ${esc(c.cardNo)}<br>Saldo disponible: <b class="${av >= total ? 'pos' : 'neg'}">${COP(av)}</b>
+      const av = Math.max(0, balance(c.id) - reserved(c.id));
+      who = `<div class="hint"><b>${esc(c.name)}</b> · ${esc(c.cardNo)}<br>Saldo disponible: <b>${COP(av)}</b>
         <button class="btn sm ghost" data-act="pclientclear" style="margin-left:6px">Cambiar</button></div>`;
+      if (lines.length && total > av) {
+        due = total - av;
+        if (av > 0) split = `<div class="hint split">La tarjeta cubre <b>${COP(av)}</b>. Completa los <b>${COP(due)}</b> restantes en caja:</div>` + methodSeg() + payBox(due);
+        else { blocked = true; split = `<div class="hint split">Esta tarjeta no tiene saldo disponible. Cobra el pedido en <b>Mostrador</b>.</div>`; }
+      }
     } else {
       const qq = ui.pcq.toLowerCase();
       const res = S.db.clients.filter(c => !qq || (c.name + ' ' + c.user + ' ' + c.phone + ' ' + c.cardNo).toLowerCase().includes(qq)).slice(0, 6);
       who = `<input data-pcsearch type="search" placeholder="Buscar cliente (nombre, usuario, tarjeta)" value="${esc(ui.pcq)}">
-        <div class="clist">${res.length ? res.map(c => `<button class="crow" data-act="pclient" data-id="${c.id}"><span>${esc(c.name)}<small class="muted"> ${esc(c.cardNo)}</small></span><b>${COP(balance(c.id) - reserved(c.id))}</b></button>`).join('') : '<div class="empty">Sin resultados</div>'}</div>`;
+        <div class="clist">${res.length ? res.map(c => `<button class="crow" data-act="pclient" data-id="${c.id}"><span>${esc(c.name)}<small class="muted"> ${esc(c.cardNo)}</small></span><b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b></button>`).join('') : '<div class="empty">Sin resultados</div>'}</div>`;
     }
   } else {
-    who = `<div class="seg">${['efectivo', 'transferencia'].map(m => `<button class="${ui.pmethod===m?'on':''}" data-act="pmethod" data-v="${m}">${m==='efectivo'?'💵 Efectivo':'🏦 Transferencia'}</button>`).join('')}</div>
-      ${ui.pmethod === 'efectivo' ? `<label>Recibido (opcional)</label><input id="recv" inputmode="numeric" value="${esc(ui.precv)}" placeholder="Ej. 50000"><div id="chg" class="muted" style="margin-top:4px">${changeText(total)}</div>` : `<div class="hint">${esc(S.db.settings.bank)}</div>`}`;
+    who = methodSeg() + payBox(total);
   }
+  const label = !tarjeta ? 'Cobrar ' + COP(total) : (due > 0 && !blocked ? 'Enviar cobro · +' + COP(due) + ' en caja' : 'Enviar cobro al cliente');
   return `<h3>Pedido</h3>
     <div class="seg" style="margin:8px 0"><button class="${!tarjeta?'on':''}" data-act="pmode" data-v="mostrador">Mostrador</button><button class="${tarjeta?'on':''}" data-act="pmode" data-v="tarjeta">💳 Tarjeta de regalo</button></div>
-    ${who}
+    ${who}${split}
     <div class="cart">${lines.length ? lines.map(({p, q}) => `<div class="cline"><div class="n">${esc(p.name)}<div class="muted">${COP(p.price)}</div></div>
       <div class="qty-ctl"><button class="btn sm ghost" data-act="cdec" data-id="${p.id}" aria-label="Menos">−</button><b>${q}</b><button class="btn sm ghost" data-act="cinc" data-id="${p.id}" aria-label="Más">+</button></div>
       <b class="lt">${COP(p.price * q)}</b></div>`).join('') : '<div class="empty">Toca los productos para agregarlos.</div>'}</div>
     <input id="pnote" placeholder="Nota (mesa, nombre, pedido…)" value="${esc(ui.pnote)}">
     <div class="total">Total: ${COP(total)}</div>
     <div class="row" style="margin-top:10px"><button class="btn ghost fit" data-act="clearcart" ${lines.length?'':'disabled'}>Vaciar</button>
-      <button class="btn ${tarjeta?'cel':'ok'}" data-act="checkout" ${lines.length?'':'disabled'}>${tarjeta ? 'Enviar cobro al cliente' : 'Cobrar ' + COP(total)}</button></div>
-    ${tarjeta ? '<p class="muted">El descuento se aplica cuando el cliente confirme desde su cuenta.</p>' : ''}`;
+      <button class="btn ${tarjeta?'cel':'ok'}" data-act="checkout" ${lines.length && !blocked ? '' : 'disabled'}>${label}</button></div>
+    ${tarjeta ? `<p class="muted">El descuento de la tarjeta se aplica cuando el cliente confirme desde su cuenta.${due > 0 && !blocked ? ' El complemento (' + COP(due) + ') se cobra en caja ahora.' : ''}</p>` : ''}`;
 }
 function changeText(total) {
   const r = Math.round(+String(ui.precv).replace(/\D/g, ''));
@@ -298,13 +320,14 @@ function adminResumen() {
   const hoy = conf.filter(t => t.type !== 'recharge' && isToday(t.resolved || t.created));
   const hoySales = hoy.filter(t => t.type === 'sale');
   const hoyRec = conf.filter(t => t.type === 'recharge' && isToday(t.resolved || t.created)).reduce((s, t) => s + t.amount, 0);
-  const sum = a => a.reduce((s, t) => s + t.amount, 0);
+  const sum = a => a.reduce((s, t) => s + t.amount + (t.topup || 0), 0);
+  const hoyTop = hoy.reduce((s, t) => s + (t.topup || 0), 0);
   const cnt = {}; hoy.forEach(t => (t.items || []).forEach(i => { cnt[i.name] = (cnt[i.name] || 0) + i.qty; }));
   const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const alerts = S.db.products.filter(p => ['low', 'out'].includes(stockState(p)));
   const latest = [...S.db.tx].sort((a, b) => b.created - a.created).slice(0, 6);
   return `<div class="grid g4" style="margin-bottom:16px">
-    <div class="stat"><span>Ventas de hoy</span><b>${COP(sum(hoy))}</b><span>Mostrador ${COP(sum(hoySales))} · Tarjetas ${COP(sum(hoy) - sum(hoySales))}</span></div>
+    <div class="stat"><span>Ventas de hoy</span><b>${COP(sum(hoy))}</b><span>Mostrador ${COP(sum(hoySales))} · Tarjetas ${COP(sum(hoy) - sum(hoySales) - hoyTop)} · Complemento ${COP(hoyTop)}</span></div>
     <div class="stat"><span>Recargas de hoy</span><b>${COP(hoyRec)}</b></div>
     <div class="stat"><span>Pedidos de hoy</span><b>${hoy.length}</b><span>Ticket prom. ${COP(hoy.length ? Math.round(sum(hoy) / hoy.length) : 0)}</span></div>
     <div class="stat"><span>Esperando confirmación</span><b>${pend}</b></div>
@@ -354,22 +377,26 @@ function adminMov() {
 
 /* ----- Menú (editor; los clientes lo ven en su cuenta) ----- */
 function adminMenu() {
+  if (ui.mpreview) return `<div class="row" style="margin-bottom:12px"><div class="fit"><button class="btn ghost" data-act="mpreview">← Volver al editor</button></div><span class="muted">Así ven el menú tus clientes en su cuenta.</span></div>` + menuHTML();
   const cats = [...new Set(S.db.products.map(p => p.cat))];
-  return `<div class="card"><h3>Menú de CHORILAB</h3>
-    <p class="muted">Lo que cambies aquí se actualiza en la Caja y en la pestaña Menú de tus clientes. Los productos ocultos no aparecen en ninguno de los dos. El stock se maneja en Inventario.</p>
-    ${cats.map(cat => `<div class="cat">${esc(cat)}</div>${S.db.products.filter(p => p.cat === cat).map(p => `<form data-form="prod" data-id="${p.id}" class="mrow ${p.active?'':'off'}">
+  const subs = S.db.settings.catSubs || {};
+  return `<div class="card"><div class="row" style="margin-bottom:4px"><h3 style="flex:2">Menú de CHORILAB</h3><div class="fit"><button class="btn sm gold" data-act="mpreview">👁 Ver como cliente</button></div></div>
+    <p class="muted">Lo que cambies aquí se actualiza en la Caja y en el Menú de tus clientes. Los productos ocultos no aparecen en ninguno de los dos. El stock se maneja en Inventario. En "Qué incluye" escribe una línea por ítem. Las categorías con la palabra "Bebida" se muestran como lista compacta.</p>
+    ${cats.map(cat => `<div class="cat">${esc(cat)}</div>
+      <form data-form="catsub" data-cat="${esc(cat)}" class="row" style="margin-bottom:6px"><div style="flex:3"><input name="sub" value="${esc(subs[cat] || '')}" placeholder="Subtítulo de la sección (opcional)" aria-label="Subtítulo"></div><div class="fit"><button class="btn sm ghost">Guardar subtítulo</button></div></form>
+      ${S.db.products.filter(p => p.cat === cat).map(p => `<form data-form="prod" data-id="${p.id}" class="mrow ${p.active ? '' : 'off'}">
       <div class="row"><div><input name="cat" value="${esc(p.cat)}" list="cats" aria-label="Categoría"></div>
       <div style="flex:2"><input name="name" value="${esc(p.name)}" required aria-label="Nombre"></div>
       <div><input name="price" type="number" min="0" step="500" value="${p.price}" required aria-label="Precio"></div></div>
-      <div class="row"><div style="flex:3"><input name="desc" value="${esc(p.desc)}" placeholder="Descripción corta (la ve el cliente)" aria-label="Descripción"></div>
-      <label class="fit chk"><input type="checkbox" name="active" ${p.active?'checked':''}> Visible</label>
+      <div class="row"><div style="flex:3"><textarea name="desc" rows="3" placeholder="Qué incluye (una línea por ítem)" aria-label="Qué incluye">${esc(p.desc)}</textarea></div>
+      <label class="fit chk"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}> Visible</label>
       <div class="fit"><button class="btn sm cel">Guardar</button> <button type="button" class="btn sm ghost" data-act="delprod" data-id="${p.id}" aria-label="Eliminar">🗑</button></div></div></form>`).join('')}`).join('')}
     <datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
     <div class="card"><h3>Agregar producto</h3><form data-form="newprod"><div class="row">
       <div><label>Categoría</label><input name="cat" list="cats" required></div>
       <div style="flex:2"><label>Nombre</label><input name="name" required></div>
       <div><label>Precio</label><input name="price" type="number" min="0" step="500" required></div></div>
-      <div class="row"><div style="flex:3"><label>Descripción (opcional)</label><input name="desc"></div>
+      <div class="row"><div style="flex:3"><label>Qué incluye (una línea por ítem, opcional)</label><textarea name="desc" rows="3"></textarea></div>
       <div class="fit"><button class="btn gold">Agregar</button></div></div></form></div>`;
 }
 
@@ -395,7 +422,8 @@ function adminInventario() {
 }
 
 function adminAjustes() {
-  return `<div class="card"><h3>Métodos de pago</h3><form data-form="settings">
+  return `<div class="card"><h3>Menú y métodos de pago</h3><form data-form="settings">
+      <label>Frase del menú (debajo del título)</label><textarea name="tag" rows="2">${esc(S.db.settings.tag)}</textarea>
       <label>Instrucciones de transferencia (se muestran al recargar y en la Caja)</label><textarea name="bank" rows="2">${esc(S.db.settings.bank)}</textarea>
       <label>Instrucciones de efectivo</label><textarea name="cash" rows="2">${esc(S.db.settings.cash)}</textarea>
       <button class="btn cel" style="margin-top:10px">Guardar</button></form></div>
@@ -415,16 +443,68 @@ function cardHTML(c) {
     <div class="lbl" style="margin-top:22px">Saldo disponible</div><div class="bal" style="margin-top:2px">${COP(balance(c.id))}</div>
     <div class="num">${esc(c.cardNo)}</div><div class="nm">${esc(c.name)}</div></div>`;
 }
+/* ----- Página de menú (la ven los clientes; el admin la previsualiza) ----- */
+const descLines = p => String(p.desc || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+const isDrinkCat = c => /bebida/i.test(c);
+const mLines = () => Object.entries(ui.mcart).map(([id, q]) => { const p = product(id); return p && p.active && stockState(p) !== 'out' && q > 0 ? {p, q: tracked(p) ? Math.min(q, p.stock) : q} : null; }).filter(Boolean);
+const mTotal = ls => ls.reduce((s, l) => s + l.q * l.p.price, 0);
+function mAdd(id, d) {
+  const p = product(id); if (!p || !p.active) return;
+  const n = (ui.mcart[id] || 0) + d;
+  if (n <= 0) delete ui.mcart[id];
+  else { if (tracked(p) && n > p.stock) return toast('Solo quedan ' + p.stock + ' de ' + p.name); ui.mcart[id] = n; }
+  render();
+}
+function mCopy() {
+  const ls = mLines(); if (!ls.length) return toast('Aún no has elegido nada');
+  const txt = 'Pedido CHORILAB\n' + ls.map(({p, q}) => `${q} x ${p.name} - ${COP(q * p.price)}`).join('\n') + '\nTotal: ' + COP(mTotal(ls));
+  try { navigator.clipboard.writeText(txt).then(() => toast('Pedido copiado'), () => toast('No se pudo copiar')); } catch (e) { toast('No se pudo copiar'); }
+}
+const mnCtrl = p => {
+  const q = ui.mcart[p.id] || 0;
+  if (stockState(p) === 'out') return '<button class="mn-add" disabled>Agotado</button>';
+  return q === 0
+    ? `<button class="mn-add" data-act="minc" data-id="${p.id}">Agregar</button>`
+    : `<div class="mn-step"><button data-act="mdec" data-id="${p.id}" aria-label="Quitar uno">−</button><output>${q}</output><button data-act="minc" data-id="${p.id}" aria-label="Agregar uno">+</button></div>`;
+};
+const mnCard = p => {
+  const sel = (ui.mcart[p.id] || 0) > 0 ? ' sel' : '', st = stockState(p), ls = descLines(p);
+  return `<article class="mn-item${sel}${st === 'out' ? ' off' : ''}">${st === 'low' ? '<span class="mn-badge">¡Quedan pocas!</span>' : ''}<h3>${esc(p.name)}</h3>
+    ${ls.length ? `<ul>${ls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div style="flex:1"></div>'}
+    <div class="mn-row"><span class="mn-price">${COP(p.price)}</span>${mnCtrl(p)}</div></article>`;
+};
+const mnDrink = p => {
+  const sel = (ui.mcart[p.id] || 0) > 0 ? ' sel' : '', ls = descLines(p);
+  return `<div class="mn-drink${sel}${stockState(p) === 'out' ? ' off' : ''}"><div class="n">${esc(p.name)}${ls[0] ? `<small>${esc(ls[0])}</small>` : ''}</div>
+    <div class="r"><span class="mn-price">${COP(p.price)}</span>${mnCtrl(p)}</div></div>`;
+};
+function mnPanel(ls) {
+  if (!ls.length) return '<p class="mn-emptyp">Aún no has elegido nada. Agrega un combo o una bebida.</p>';
+  return '<h4>Tu pedido</h4>' + ls.map(({p, q}) => `<div class="mn-line"><div>${esc(p.name)}<br><small>${COP(p.price)} c/u</small></div>
+    <div class="mn-step"><button data-act="mdec" data-id="${p.id}" aria-label="Quitar uno">−</button><output>${q}</output><button data-act="minc" data-id="${p.id}" aria-label="Agregar uno">+</button></div>
+    <div class="sb">${COP(q * p.price)}</div></div>`).join('')
+    + '<div class="mn-tools"><button class="mn-ghost" data-act="mcopy">Copiar pedido</button><button class="mn-ghost" data-act="mclear">Vaciar</button></div>';
+}
 function menuHTML() {
   const prods = S.db.products.filter(p => p.active);
   const cats = [...new Set(prods.map(p => p.cat))];
-  if (!prods.length) return '<div class="card"><div class="empty">El menú estará disponible pronto.</div></div>';
-  return cats.map(cat => `<div class="card"><div class="cat" style="margin-top:0">${esc(cat)}</div><div class="menu">
-    ${prods.filter(p => p.cat === cat).map(p => { const st = stockState(p); return `<div class="mitem ${st==='out'?'soldout':''}">
-      <div class="mt"><b>${esc(p.name)}</b><span class="mp">${COP(p.price)}</span></div>
-      ${p.desc ? `<div class="muted">${esc(p.desc)}</div>` : ''}
-      ${st === 'out' ? '<span class="badge b-out">Agotado</span>' : st === 'low' ? '<span class="badge b-low">¡Quedan pocas!</span>' : ''}</div>`; }).join('')}</div></div>`).join('');
+  const subs = S.db.settings.catSubs || {};
+  const ls = mLines(), qty = ls.reduce((s, l) => s + l.q, 0), tot = mTotal(ls);
+  const sections = cats.map(cat => {
+    const drinks = isDrinkCat(cat);
+    return `<section class="mn-sec"><h2>${esc(cat)}</h2>${subs[cat] ? `<p class="mn-subt">${esc(subs[cat])}</p>` : ''}
+      <div class="${drinks ? 'mn-drinks' : 'mn-grid'}">${prods.filter(p => p.cat === cat).map(drinks ? mnDrink : mnCard).join('')}</div></section>`;
+  }).join('');
+  return `<div class="mn"><div class="mn-flag ar" aria-hidden="true"></div><div class="mn-flag de" aria-hidden="true"></div>
+    <header class="mn-hero"><div class="mn-eyebrow">Choripanería · Menú</div><h1>CHORI<span>LAB</span></h1><p class="mn-tag">${esc(S.db.settings.tag)}</p></header>
+    ${sections || '<p class="mn-emptyp" style="color:#55616D">El menú estará disponible pronto.</p>'}
+    <footer class="mn-foot">Precios en pesos colombianos (COP). Elige tus productos y revisa el total en la barra inferior.</footer></div>
+    <div class="mn-bar" role="region" aria-label="Tu pedido"><div class="mn-barin">
+      ${ui.mopen ? `<div class="mn-panel">${mnPanel(ls)}</div>` : ''}
+      <div class="mn-sum"><div class="mn-stats"><div><span class="lbl">Productos</span><span class="val">${qty}</span></div><div class="tot"><span class="lbl">Total</span><span class="val">${COP(tot)}</span></div></div>
+      <button class="mn-toggle" data-act="mtoggle" aria-expanded="${ui.mopen}">${ui.mopen ? 'Ocultar' : 'Ver pedido'}</button></div></div></div>`;
 }
+
 function clientView() {
   const c = client(S.me.cid);
   const pend = pending(c.id);
@@ -439,6 +519,7 @@ function clientView() {
         <div><span class="badge b-${t.type}">${txLabel(t)}</span> <b>${COP(t.amount)}</b></div>
         <div class="muted">${fdate(t.created)}${t.type==='recharge' ? ' · ' + methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : ''}</div>
         ${t.items ? `<div class="muted">${itemsText(t.items)}</div>` : ''}
+        ${t.topup ? `<div class="muted">Total del pedido: ${COP(t.amount + t.topup)} · el resto (${COP(t.topup)}) se paga en ${methodName(t.topupMethod).toLowerCase()}</div>` : ''}
         ${t.note ? `<div class="muted">Nota: ${esc(t.note)}</div>` : ''}
         <div style="margin-top:8px"><button class="btn sm ok" data-act="confirm" data-id="${t.id}">Revisar y confirmar</button></div></div>`).join('') : '<div class="empty">Nada pendiente ✅</div>'}</div></div>
     <div class="card"><h3>Mi historial</h3>${txTable(hist, 'client')}</div>
@@ -450,7 +531,7 @@ function clientView() {
 
 function txDetail(t) {
   if (t.type === 'recharge') return methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '');
-  return (t.type === 'sale' ? methodName(t.method) + ' · ' : '') + itemsText(t.items);
+  return (t.type === 'sale' ? methodName(t.method) + ' · ' : '') + itemsText(t.items) + (t.topup ? ' · Complemento ' + methodName(t.topupMethod).toLowerCase() + ' ' + COP(t.topup) : '');
 }
 function txTable(list, role) {
   if (!list.length) return '<div class="empty">Sin movimientos.</div>';
@@ -466,7 +547,7 @@ function txTable(list, role) {
       <td class="muted">${txDetail(t)}${t.note ? '<br>' + esc(t.note) : ''}</td>
       <td class="${cls}">${sign}${COP(t.amount)}</td>
       <td><span class="badge b-${t.status}">${t.status}</span></td>
-      ${role==='admin'?`<td style="white-space:nowrap">${t.type==='sale' && t.status==='confirmada' ? `<button class="btn sm ghost" data-act="ticket" data-id="${t.id}">Ticket</button> ` : ''}${canVoid ? `<button class="btn sm ghost" data-act="cancel" data-id="${t.id}">Anular</button>` : ''}</td>`:''}</tr>`;
+      ${role==='admin'?`<td style="white-space:nowrap">${(t.type==='sale' || t.type==='use') && t.status==='confirmada' ? `<button class="btn sm ghost" data-act="ticket" data-id="${t.id}">Ticket</button> ` : ''}${canVoid ? `<button class="btn sm ghost" data-act="cancel" data-id="${t.id}">Anular</button>` : ''}</td>`:''}</tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -516,6 +597,7 @@ function openConfirm(id) {
     <div class="total" style="text-align:left">${t.type==='recharge'?'+':'−'}${COP(t.amount)}</div>
     <p class="muted">${t.type==='recharge' ? 'Método: ' + methodName(t.method) + (t.ref ? ' · Ref: ' + esc(t.ref) : '') : itemsText(t.items)}</p>
     ${t.note ? `<p class="muted">Nota: ${esc(t.note)}</p>` : ''}
+    ${t.topup ? `<p class="muted">Total del pedido ${COP(t.amount + t.topup)}: ${COP(t.amount)} con tu tarjeta y ${COP(t.topup)} en ${methodName(t.topupMethod).toLowerCase()}.</p>` : ''}
     <label>Escribe tu clave para confirmar</label><input type="password" name="pass" autocomplete="current-password" required>
     <div class="row" style="margin-top:12px"><button class="btn ok">Confirmar</button>
     <button type="button" class="btn red" data-act="reject" data-id="${id}">Rechazar</button></div></form>`);
@@ -536,12 +618,16 @@ function openStock(id) {
 }
 function openTicket(id) {
   const t = S.db.tx.find(x => x.id === id); if (!t) return;
-  const recv = t.received && t.received >= t.amount;
+  const isUse = t.type === 'use', top = t.topup || 0, total = t.amount + top;
+  const cash = isUse ? top : t.amount, pm = isUse ? t.topupMethod : t.method;
+  const recv = pm === 'efectivo' && t.received && t.received >= cash;
   modal('Ticket de venta', `<div class="ticket"><div style="text-align:center"><b>🌭 CHORILAB</b><br><span class="muted">${fdate(t.created)} · #${esc(t.id)}</span></div>
     <hr>${(t.items || []).map(i => `<div class="tl"><span>${i.qty}× ${esc(i.name)}</span><span>${COP(i.qty * i.price)}</span></div>`).join('')}<hr>
-    <div class="tl"><b>Total</b><b>${COP(t.amount)}</b></div>
-    <div class="tl"><span>Pago</span><span>${methodName(t.method)}</span></div>
-    ${recv ? `<div class="tl"><span>Recibido</span><span>${COP(t.received)}</span></div><div class="tl"><span>Cambio</span><span>${COP(t.received - t.amount)}</span></div>` : ''}
+    <div class="tl"><b>Total</b><b>${COP(total)}</b></div>
+    ${isUse ? `<div class="tl"><span>Tarjeta de regalo</span><span>${COP(t.amount)}</span></div>
+      ${top ? `<div class="tl"><span>Complemento (${methodName(pm)})</span><span>${COP(top)}</span></div>` : ''}`
+      : `<div class="tl"><span>Pago</span><span>${methodName(t.method)}</span></div>`}
+    ${recv ? `<div class="tl"><span>Recibido</span><span>${COP(t.received)}</span></div><div class="tl"><span>Cambio</span><span>${COP(t.received - cash)}</span></div>` : ''}
     ${t.note ? `<div class="muted">Nota: ${esc(t.note)}</div>` : ''}
     <p style="text-align:center;margin:10px 0 0">¡Gracias por tu compra!</p></div>
     <div class="row noprint" style="margin-top:12px"><button class="btn gold" data-act="print">🖨 Imprimir</button><button class="btn ghost" data-act="close">Cerrar</button></div>`);
@@ -570,29 +656,34 @@ async function checkout() {
   const tarjeta = ui.pmode === 'tarjeta', cid = ui.pclient, note = ui.pnote.trim();
   if (tarjeta && !(cid && client(cid))) return toast('Elige el cliente de la tarjeta');
   const method = ui.pmethod, txid = uid();
-  const received = tarjeta || method !== 'efectivo' ? 0 : Math.round(+String(ui.precv).replace(/\D/g, '')) || 0;
-  if (!tarjeta && method === 'efectivo' && received && received < total) return toast('El valor recibido no cubre el total');
+  const rawRecv = method === 'efectivo' ? Math.round(+String(ui.precv).replace(/\D/g, '')) || 0 : 0;
+  let topup = 0;
   const err = await mutate(st => {
     for (const it of items) {
       const p = st.db.products.find(x => x.id === it.id);
       if (!p) return 'Producto ya no disponible: ' + it.name;
       if (tracked(p) && p.stock < it.qty) return `Stock insuficiente de ${p.name} (quedan ${p.stock})`;
     }
+    let cardPart = total; topup = 0;
     if (tarjeta) {
       if (!st.db.clients.some(c => c.id === cid)) return 'El cliente ya no existe';
       const bal = st.db.tx.filter(t => t.clientId === cid && t.status === 'confirmada').reduce((s, t) => s + (t.type === 'recharge' ? t.amount : -t.amount), 0);
       const res = st.db.tx.filter(t => t.clientId === cid && t.status === 'pendiente' && t.type === 'use').reduce((s, t) => s + t.amount, 0);
-      if (total > bal - res) return 'Saldo insuficiente en la tarjeta';
+      const av = bal - res;
+      if (av <= 0) return 'La tarjeta no tiene saldo disponible. Cobra el pedido en Mostrador.';
+      cardPart = Math.min(total, av); topup = total - cardPart;
     }
+    const cashDueNow = tarjeta ? topup : total;
+    if (cashDueNow > 0 && rawRecv && rawRecv < cashDueNow) return 'El valor recibido no cubre ' + COP(cashDueNow);
     items.forEach(it => { const p = st.db.products.find(x => x.id === it.id); if (tracked(p)) p.stock -= it.qty; });
     const now = Date.now();
     st.db.tx.push(tarjeta
-      ? {id:txid, clientId:cid, type:'use', amount:total, items, note, status:'pendiente', created:now}
-      : {id:txid, clientId:null, type:'sale', amount:total, items, method, received, note, status:'confirmada', created:now, resolved:now});
+      ? {id:txid, clientId:cid, type:'use', amount:cardPart, items, note, status:'pendiente', created:now, ...(topup ? {topup, topupMethod:method, received:rawRecv} : {})}
+      : {id:txid, clientId:null, type:'sale', amount:total, items, method, received:rawRecv, note, status:'confirmada', created:now, resolved:now});
   });
   if (err) return toast(err);
   resetCart();
-  if (tarjeta) { render(); toast('Cobro enviado: queda pendiente de confirmación del cliente'); }
+  if (tarjeta) { render(); toast('Cobro enviado: pendiente de confirmación del cliente' + (topup ? ` · Cobra ${COP(topup)} en ${methodName(method).toLowerCase()}` : '')); }
   else { render(); openTicket(txid); }
 }
 
@@ -704,8 +795,13 @@ const forms = {
     if (err) return toast(err);
     closeModal(); render(); toast('Inventario actualizado');
   },
+  async catsub(f, d) {
+    const cat = f.dataset.cat, sub = d.get('sub').trim();
+    const err = await mutate(st => { st.db.settings.catSubs = st.db.settings.catSubs || {}; if (sub) st.db.settings.catSubs[cat] = sub; else delete st.db.settings.catSubs[cat]; });
+    toast(err || 'Subtítulo guardado');
+  },
   async settings(f, d) {
-    const err = await mutate(st => { st.db.settings.bank = d.get('bank').trim(); st.db.settings.cash = d.get('cash').trim(); });
+    const err = await mutate(st => { st.db.settings.bank = d.get('bank').trim(); st.db.settings.cash = d.get('cash').trim(); st.db.settings.tag = d.get('tag').trim(); });
     toast(err || 'Ajustes guardados');
   },
   async mypass(f, d) {
@@ -750,7 +846,7 @@ document.addEventListener('click', e => {
   else if (a === 'boot') boot();
   else if (a === 'logout') logout();
   else if (a === 'reload') run(async () => { await refresh(); render(); toast('Datos actualizados'); });
-  else if (a === 'tab') { ui.tab = b.dataset.v; ui.q = ''; render(); }
+  else if (a === 'tab') { ui.tab = b.dataset.v; ui.q = ''; ui.mpreview = false; render(); }
   else if (a === 'ctab') { ui.ctab = b.dataset.v; render(); }
   else if (a === 'recharge') openRecharge(id);
   else if (a === 'use') { ui.tab = 'caja'; ui.pmode = 'tarjeta'; ui.pclient = id; render(); }
@@ -771,11 +867,18 @@ document.addEventListener('click', e => {
   else if (a === 'pclient') { ui.pclient = id; ui.pcq = ''; render(); }
   else if (a === 'pclientclear') { ui.pclient = null; render(); }
   else if (a === 'checkout') run(checkout);
+  /* menú */
+  else if (a === 'minc') mAdd(id, 1);
+  else if (a === 'mdec') mAdd(id, -1);
+  else if (a === 'mclear') { ui.mcart = {}; render(); }
+  else if (a === 'mtoggle') { ui.mopen = !ui.mopen; render(); }
+  else if (a === 'mcopy') mCopy();
+  else if (a === 'mpreview') { ui.mpreview = !ui.mpreview; render(); }
   /* movimientos */
   else if (a === 'reject') run(async () => { if (await setStatus(id, 'rechazada')) { closeModal(); render(); toast('Movimiento rechazado'); } });
   else if (a === 'cancel') {
     const t = S.db.tx.find(x => x.id === id); if (!t) return;
-    const msg = t.status === 'confirmada' ? '¿Anular este movimiento ya confirmado? ' + (t.type === 'use' ? 'Se devolverá el saldo al cliente y el stock.' : 'Se devolverá el stock.') : '¿Anular este movimiento pendiente?';
+    const msg = t.status === 'confirmada' ? '¿Anular este movimiento ya confirmado? ' + (t.type === 'use' ? 'Se devolverá el saldo al cliente y el stock.' + (t.topup ? ' El complemento cobrado en ' + methodName(t.topupMethod).toLowerCase() + ' (' + COP(t.topup) + ') debes devolverlo aparte.' : '') : 'Se devolverá el stock.') : '¿Anular este movimiento pendiente?';
     if (confirm(msg)) run(async () => { if (await setStatus(id, 'anulada')) render(); });
   }
   else if (a === 'delclient') {
@@ -804,7 +907,7 @@ document.addEventListener('input', e => {
   if (t.matches('[data-search]')) { ui.q = t.value; render(); refocus('[data-search]'); }
   else if (t.matches('[data-psearch]')) { ui.pq = t.value; render(); refocus('[data-psearch]'); }
   else if (t.matches('[data-pcsearch]')) { ui.pcq = t.value; render(); refocus('[data-pcsearch]'); }
-  else if (t.id === 'recv') { ui.precv = t.value; const c = $('#chg'); if (c) c.innerHTML = changeText(cartTotal()); }
+  else if (t.id === 'recv') { ui.precv = t.value; const c = $('#chg'); if (c) c.innerHTML = changeText(cashDue()); }
   else if (t.id === 'pnote') ui.pnote = t.value;
 });
 
