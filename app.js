@@ -90,13 +90,14 @@ const defaults = () => ({
   ],
   clients: [],
   tx: [],
-  stockLog: []
+  stockLog: [],
+  layaways: []
 });
 /* Completa campos nuevos en bases creadas con versiones anteriores. */
 function normalize(db) {
   db.settings = db.settings || {}; db.settings.bank ??= ''; db.settings.cash ??= '';
   db.settings.tag ??= 'Embutidos artesanales de calidad. Chorizo de 21 cm, pan de masa madre y chimichurri hecho en casa.'; db.settings.catSubs ??= {};
-  db.products = db.products || []; db.clients = db.clients || []; db.tx = db.tx || []; db.stockLog = db.stockLog || [];
+  db.products = db.products || []; db.clients = db.clients || []; db.tx = db.tx || []; db.stockLog = db.stockLog || []; db.layaways = db.layaways || []; db.layaways.forEach(l => { l.abonos = l.abonos || []; });
   db.products.forEach(p => {
     if (p.active === undefined) p.active = true;
     if (p.stock === undefined) p.stock = null;
@@ -109,7 +110,7 @@ function normalize(db) {
 let S = {rev:0, users:{}, db:null, dek:null, kb64:null, me:null};
 const ui = {
   view:'loading', tab:'caja', ctab:'tarjeta', filter:'todas', tfilter:'todos', q:'', csort:'name', busy:false, dirty:false, error:'',
-  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false
+  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false, lfilter:'activo', lq:''
 };
 
 const client = id => S.db.clients.find(c => c.id === id);
@@ -232,8 +233,9 @@ function loginView() {
 function adminView() {
   const low = S.db.products.filter(p => ['low', 'out'].includes(stockState(p))).length;
   const pend = S.db.tx.filter(t => t.status === 'pendiente').length;
-  const tabs = [['caja','🧾 Caja'],['resumen','Resumen'],['clientes','Clientes'],['movimientos','Movimientos' + (pend ? ` (${pend})` : '')],['menu','Menú'],['inventario','Inventario' + (low ? ` ⚠${low}` : '')],['ajustes','Ajustes']];
-  const body = {caja:adminCaja, resumen:adminResumen, clientes:adminClientes, movimientos:adminMov, menu:adminMenu, inventario:adminInventario, ajustes:adminAjustes}[ui.tab]();
+  const lay = S.db.layaways.filter(l => l.status === 'activo' && daysTo(l.dueDate) <= 0).length;
+  const tabs = [['caja','🧾 Caja'],['resumen','Resumen'],['clientes','Clientes'],['apartados','Apartados' + (lay ? ` ⏰${lay}` : '')],['movimientos','Movimientos' + (pend ? ` (${pend})` : '')],['menu','Menú'],['inventario','Inventario' + (low ? ` ⚠${low}` : '')],['ajustes','Ajustes']];
+  const body = {caja:adminCaja, resumen:adminResumen, clientes:adminClientes, apartados:adminApartados, movimientos:adminMov, menu:adminMenu, inventario:adminInventario, ajustes:adminAjustes}[ui.tab]();
   return topbar('Administrador') + `<main class="${ui.tab === 'caja' ? 'wide' : ''}">
     <div class="tabs">${tabs.map(([k, l]) => `<button class="${ui.tab===k?'on':''}" data-act="tab" data-v="${k}">${l}</button>`).join('')}</div>${body}</main>`;
 }
@@ -322,6 +324,9 @@ function adminResumen() {
   const hoyRec = conf.filter(t => t.type === 'recharge' && isToday(t.resolved || t.created)).reduce((s, t) => s + t.amount, 0);
   const sum = a => a.reduce((s, t) => s + t.amount + (t.topup || 0), 0);
   const hoyTop = hoy.reduce((s, t) => s + (t.topup || 0), 0);
+  const layAct = S.db.layaways.filter(l => l.status === 'activo');
+  const abonosHoy = S.db.layaways.reduce((s, l) => s + l.abonos.filter(a => !a.voided && isToday(a.created)).reduce((x, a) => x + a.amount, 0), 0);
+  const prox = [...layAct].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 5);
   const cnt = {}; hoy.forEach(t => (t.items || []).forEach(i => { cnt[i.name] = (cnt[i.name] || 0) + i.qty; }));
   const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const alerts = S.db.products.filter(p => ['low', 'out'].includes(stockState(p)));
@@ -332,12 +337,15 @@ function adminResumen() {
     <div class="stat"><span>Pedidos de hoy</span><b>${hoy.length}</b><span>Ticket prom. ${COP(hoy.length ? Math.round(sum(hoy) / hoy.length) : 0)}</span></div>
     <div class="stat"><span>Esperando confirmación</span><b>${pend}</b></div>
     <div class="stat"><span>Clientes</span><b>${S.db.clients.length}</b></div>
+    <div class="stat"><span>Apartados activos</span><b>${layAct.length}</b><span>Por cobrar ${COP(layAct.reduce((s, l) => s + layDue(l), 0))}</span></div>
+    <div class="stat"><span>Abonos de hoy</span><b>${COP(abonosHoy)}</b></div>
     <div class="stat"><span>Saldo total en tarjetas</span><b>${COP(rec - use)}</b></div>
     <div class="stat"><span>Recargas confirmadas</span><b>${COP(rec)}</b><span>Transf. ${COP(tr)} · Efectivo ${COP(rec - tr)}</span></div>
     <div class="stat"><span>Consumos con tarjeta</span><b>${COP(use)}</b></div></div>
     <div class="grid g2">
       <div class="card"><h3>Más vendidos hoy</h3>${top.length ? top.map(([n, q]) => `<div class="prow"><div class="n">${esc(n)}</div><b>${q}</b></div>`).join('') : '<div class="empty">Aún no hay ventas hoy.</div>'}</div>
       <div class="card"><h3>Alertas de inventario</h3>${alerts.length ? alerts.map(p => `<div class="prow"><div class="n">${esc(p.name)}</div><span class="badge b-${stockState(p)}">${stockState(p)==='out'?'Agotado':p.stock+' restantes'}</span></div>`).join('') : '<div class="empty">Todo en orden ✅</div>'}</div></div>
+    <div class="card"><h3>Próximas entregas (apartados)</h3>${prox.length ? prox.map(l => `<div class="prow"><div class="n">${esc((client(l.clientId) || {}).name || '—')}<div class="muted">${fday(l.dueDate)} · saldo ${COP(layDue(l))}</div></div>${dueBadge(l)}</div>`).join('') : '<div class="empty">Sin apartados activos.</div>'}</div>
     <div class="card"><h3>Últimos movimientos</h3>${txTable(latest, 'admin')}</div>`;
 }
 
@@ -361,6 +369,7 @@ function adminClientes() {
         <td class="muted">${esc(c.cardNo)}</td><td><b>${COP(balance(c.id))}</b></td><td class="muted">${la ? fdate(la) : '—'}</td><td>${pending(c.id).length}</td>
         <td style="white-space:nowrap"><button class="btn sm ok" data-act="recharge" data-id="${c.id}">Recargar</button>
         <button class="btn sm cel" data-act="use" data-id="${c.id}">Cobrar</button>
+        <button class="btn sm gold" data-act="laynew" data-id="${c.id}">Apartar</button>
         <button class="btn sm ghost" data-act="detail" data-id="${c.id}">Ver</button>
         <button class="btn sm ghost" data-act="delclient" data-id="${c.id}" aria-label="Eliminar">🗑</button></td></tr>`; }).join('')}
       </tbody></table></div>` : '<div class="empty">Aún no hay clientes.</div>'}</div>`;
@@ -398,6 +407,66 @@ function adminMenu() {
       <div><label>Precio</label><input name="price" type="number" min="0" step="500" required></div></div>
       <div class="row"><div style="flex:3"><label>Qué incluye (una línea por ítem, opcional)</label><textarea name="desc" rows="3"></textarea></div>
       <div class="fit"><button class="btn gold">Agregar</button></div></div></form></div>`;
+}
+
+/* ----- Apartados ----- */
+const dstr = d => { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+const todayStr = () => dstr(Date.now());
+const fday = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO', {weekday:'short', day:'numeric', month:'short', year:'numeric'}) : '—';
+const daysTo = s => Math.round((new Date(s + 'T00:00:00') - new Date(new Date().setHours(0, 0, 0, 0))) / 864e5);
+const layPaid = l => (l.abonos || []).filter(a => !a.voided).reduce((s, a) => s + a.amount, 0);
+const layDue = l => Math.max(0, l.total - layPaid(l));
+const layById = id => S.db.layaways.find(x => x.id === id);
+const laySort = (a, b) => (a.status === 'activo') !== (b.status === 'activo') ? (a.status === 'activo' ? -1 : 1) : a.status === 'activo' ? a.dueDate.localeCompare(b.dueDate) : b.created - a.created;
+function dueBadge(l) {
+  if (l.status === 'entregado') return `<span class="badge b-confirmada">Entregado ${new Date(l.delivered).toLocaleDateString('es-CO', {dateStyle:'medium'})}</span>`;
+  if (l.status === 'cancelado') return '<span class="badge b-anulada">Cancelado</span>';
+  const n = daysTo(l.dueDate);
+  return n < 0 ? `<span class="badge b-out">Atrasado ${-n} d</span>` : n === 0 ? '<span class="badge b-low">Entrega hoy</span>' : n <= 3 ? `<span class="badge b-low">En ${n} d</span>` : `<span class="badge b-ok">En ${n} d</span>`;
+}
+function layCard(l, role) {
+  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), active = l.status === 'activo';
+  const pct = l.total ? Math.min(100, Math.round(paid / l.total * 100)) : 100;
+  const btns = role !== 'admin' ? '' : `<div class="fit" style="white-space:nowrap">
+    ${active && due > 0 ? `<button class="btn sm ok" data-act="layabono" data-id="${l.id}">Abonar</button> ` : ''}
+    ${active && due === 0 ? `<button class="btn sm cel" data-act="laydeliver" data-id="${l.id}">Entregar</button> ` : ''}
+    <button class="btn sm ghost" data-act="laydetail" data-id="${l.id}">Ver</button></div>`;
+  return `<div class="card lay ${active ? '' : 'done'}">
+    <div class="row" style="align-items:flex-start"><div style="flex:2 1 220px">
+      ${role === 'admin' ? `<b>${c ? esc(c.name) : '<i>cliente eliminado</i>'}</b><br>` : ''}
+      <span class="muted">${itemsText(l.items)}</span>${l.note ? `<br><span class="muted">Nota: ${esc(l.note)}</span>` : ''}</div>
+      <div class="fit" style="text-align:right"><div class="muted">Entrega</div><b>${fday(l.dueDate)}</b><br>${dueBadge(l)}</div></div>
+    <div class="lbar" role="img" aria-label="Abonado ${pct}%"><i style="width:${pct}%"></i></div>
+    <div class="row" style="margin-top:8px"><div><span class="muted">Abonado</span><br><b class="pos">${COP(paid)}</b></div>
+      <div><span class="muted">Saldo</span><br>${l.status === 'cancelado' ? '<b>—</b>' : `<b class="${due ? 'neg' : 'pos'}">${COP(due)}</b>`}</div>
+      <div><span class="muted">Total</span><br><b>${COP(l.total)}</b></div>${btns}</div></div>`;
+}
+function adminApartados() {
+  const L = S.db.layaways, q = ui.lq.toLowerCase();
+  const act = L.filter(l => l.status === 'activo');
+  const late = act.filter(l => daysTo(l.dueDate) <= 0).length;
+  const list = L.filter(l => {
+    if (ui.lfilter !== 'todos' && l.status !== ui.lfilter) return false;
+    if (!q) return true;
+    const c = client(l.clientId) || {};
+    return ((c.name || '') + ' ' + (c.user || '') + ' ' + (c.cardNo || '') + ' ' + l.items.map(i => i.name).join(' ')).toLowerCase().includes(q);
+  }).sort(laySort);
+  return `<div class="grid g4" style="margin-bottom:16px">
+    <div class="stat"><span>Apartados activos</span><b>${act.length}</b></div>
+    <div class="stat"><span>Abonado en activos</span><b>${COP(act.reduce((s, l) => s + layPaid(l), 0))}</b></div>
+    <div class="stat"><span>Por cobrar</span><b>${COP(act.reduce((s, l) => s + layDue(l), 0))}</b></div>
+    <div class="stat"><span>Entrega hoy o atrasados</span><b class="${late ? 'neg' : ''}">${late}</b></div></div>
+    <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="flex:2 1 160px">Apartados (${list.length})</h3>
+      <input data-lsearch type="search" placeholder="Buscar…" value="${esc(ui.lq)}">
+      <select data-lfilter aria-label="Estado">${[['activo', 'Activos'], ['entregado', 'Entregados'], ['cancelado', 'Cancelados'], ['todos', 'Todos']].map(([v, t]) => `<option value="${v}" ${ui.lfilter === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <div class="fit"><button class="btn gold" data-act="laynew">+ Nuevo apartado</button></div></div>
+      <p class="muted">Un apartado reserva productos para un cliente: el stock se descuenta al crearlo, el cliente va abonando y se entrega cuando el saldo llega a $0.</p></div>
+    ${list.length ? list.map(l => layCard(l, 'admin')).join('') : '<div class="card"><div class="empty">No hay apartados en esta vista.</div></div>'}`;
+}
+function clientApartados(c) {
+  const list = S.db.layaways.filter(l => l.clientId === c.id).sort(laySort);
+  return `<p class="muted" style="margin-top:0">Aquí ves lo que tienes apartado, cuánto llevas abonado y la fecha de entrega.</p>`
+    + (list.length ? list.map(l => layCard(l, 'client')).join('') : '<div class="card"><div class="empty">No tienes apartados.</div></div>');
 }
 
 /* ----- Inventario ----- */
@@ -509,8 +578,9 @@ function clientView() {
   const c = client(S.me.cid);
   const pend = pending(c.id);
   const hist = S.db.tx.filter(t => t.clientId === c.id && t.status !== 'pendiente').sort((a, b) => b.created - a.created);
-  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length ? ` (${pend.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button></div>`;
+  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length ? ` (${pend.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button><button class="${ui.ctab==='apartados'?'on':''}" data-act="ctab" data-v="apartados">Mis apartados${(n => n ? ' (' + n + ')' : '')(S.db.layaways.filter(l => l.clientId === c.id && l.status === 'activo').length)}</button></div>`;
   if (ui.ctab === 'menu') return topbar(c.name) + `<main>${tabs}${menuHTML()}</main>`;
+  if (ui.ctab === 'apartados') return topbar(c.name) + `<main>${tabs}${clientApartados(c)}</main>`;
   return topbar(c.name) + `<main>${tabs}<div class="grid g2" style="align-items:start">
     <div>${cardHTML(c)}${reserved(c.id) ? `<p class="muted">Hay ${COP(reserved(c.id))} pendientes de confirmar en consumos.</p>` : ''}</div>
     <div class="card"><h3>Por confirmar (${pend.length})</h3>
@@ -615,6 +685,63 @@ function openStock(id) {
     <div><label>Avisar cuando queden ≤</label><input name="min" type="number" min="0" step="1" value="${p.min || 0}"></div></div>
     <label>Motivo (opcional)</label><input name="note" placeholder="Compra a proveedor, conteo, merma…">
     <button class="btn cel" style="width:100%;margin-top:12px">Guardar</button></form>`);
+}
+function openLayNew(cid) {
+  if (!S.db.clients.length) return toast('Primero crea un cliente');
+  const prods = S.db.products.filter(p => p.active && stockState(p) !== 'out');
+  const cats = [...new Set(prods.map(p => p.cat))];
+  const clients = [...S.db.clients].sort((a, b) => a.name.localeCompare(b.name));
+  modal('Nuevo apartado', `<form data-form="laynew" data-optref>
+    <label>Cliente</label><select name="cid" required>${clients.map(c => `<option value="${c.id}" ${c.id === cid ? 'selected' : ''}>${esc(c.name)} · ${esc(c.cardNo)}</option>`).join('')}</select>
+    ${cats.map(cat => `<div class="cat">${esc(cat)}</div>${prods.filter(p => p.cat === cat).map(p =>
+      `<div class="prow"><div class="n">${esc(p.name)}<div class="muted">${COP(p.price)}${tracked(p) ? ' · ' + p.stock + ' disp.' : ''}</div></div>
+      <input class="qty" type="number" min="0" value="0" name="q_${p.id}" data-price="${p.price}" aria-label="Cantidad ${esc(p.name)}"></div>`).join('')}`).join('')}
+    <div class="total">Total: <span id="tot">${COP(0)}</span></div>
+    <div class="row"><div><label>Fecha de entrega</label><input type="date" name="due" required min="${todayStr()}"></div>
+    <div><label>Abono inicial (COP, opcional)</label><input name="amount" type="number" min="0" step="1" value="0"></div></div>
+    <label>Método del abono</label>
+    <div class="radio"><label><input type="radio" name="method" value="efectivo" checked> 💵 Efectivo</label>
+    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label></div>
+    <div class="hint" id="payhint">${esc(S.db.settings.cash)}</div>
+    <div id="refbox" hidden><label>Referencia / comprobante de la transferencia</label><input name="ref"></div>
+    <label>Nota (opcional)</label><input name="note" placeholder="Ej. para el cumpleaños de Sofía">
+    <p class="muted">Los precios quedan fijos al crear el apartado y el stock se reserva desde ahora.</p>
+    <button class="btn gold" style="width:100%">Crear apartado</button></form>`);
+}
+function openLayAbono(id) {
+  const l = layById(id); if (!l) return;
+  const c = client(l.clientId), due = layDue(l);
+  modal('Abonar · ' + esc(c ? c.name : ''), `<form data-form="layabono" data-id="${id}">
+    <div class="hint">Total ${COP(l.total)} · Abonado ${COP(layPaid(l))} · <b>Saldo ${COP(due)}</b></div>
+    <label>Monto del abono (COP)</label><input name="amount" type="number" min="1" max="${due}" step="1" required>
+    <div class="chips"><button type="button" class="btn sm ghost" data-act="amt" data-v="${due}">Pagar el saldo (${COP(due)})</button></div>
+    <label>Método de pago</label>
+    <div class="radio"><label><input type="radio" name="method" value="efectivo" checked> 💵 Efectivo</label>
+    <label><input type="radio" name="method" value="transferencia"> 🏦 Transferencia</label></div>
+    <div class="hint" id="payhint">${esc(S.db.settings.cash)}</div>
+    <div id="refbox" hidden><label>Referencia / comprobante de la transferencia</label><input name="ref"></div>
+    <label>Nota (opcional)</label><input name="note">
+    <button class="btn ok" style="width:100%;margin-top:12px">Registrar abono</button></form>`);
+}
+function openLayDetail(id) {
+  const l = layById(id); if (!l) return;
+  const c = client(l.clientId), paid = layPaid(l), due = layDue(l), active = l.status === 'activo';
+  const st = {activo:'Activo', entregado:'Entregado', cancelado:'Cancelado'}[l.status];
+  modal('Apartado · ' + esc(c ? c.name : 'cliente eliminado'), `<div class="ticket"><div style="text-align:center"><b>🌭 CHORILAB</b><br><span class="muted">Comprobante de apartado · #${esc(l.id)}</span></div>
+    <hr><div class="tl"><span>Cliente</span><span>${esc(c ? c.name : '—')}</span></div>
+    <div class="tl"><span>Entrega</span><b>${fday(l.dueDate)}</b></div><div class="tl"><span>Estado</span><span>${st}</span></div><hr>
+    ${l.items.map(i => `<div class="tl"><span>${i.qty}× ${esc(i.name)}</span><span>${COP(i.qty * i.price)}</span></div>`).join('')}<hr>
+    <div class="tl"><b>Total</b><b>${COP(l.total)}</b></div><div class="tl"><span>Abonado</span><span>${COP(paid)}</span></div><div class="tl"><b>Saldo</b><b>${COP(due)}</b></div>
+    <hr><div class="muted">Abonos</div>
+    ${(l.abonos || []).length ? l.abonos.map(a => `<div class="tl"><span>${fdate(a.created)} · ${methodName(a.method)}${a.ref ? ' · ' + esc(a.ref) : ''}${a.note ? ' · ' + esc(a.note) : ''}</span><span>${a.voided ? '<s>' + COP(a.amount) + '</s> anulado' : COP(a.amount)}${active && !a.voided ? ` <button class="btn sm ghost noprint" data-act="layvoid" data-id="${l.id}" data-aid="${a.id}">Anular</button>` : ''}</span></div>`).join('') : '<div class="muted">Sin abonos todavía.</div>'}
+    ${l.note ? `<hr><div class="muted">Nota: ${esc(l.note)}</div>` : ''}</div>
+    ${active ? `<form data-form="laydue" data-id="${id}" class="row noprint" style="margin-top:12px"><div><label>Cambiar fecha de entrega</label><input type="date" name="due" value="${esc(l.dueDate)}" required></div><div class="fit"><button class="btn sm cel">Guardar fecha</button></div></form>` : ''}
+    <div class="row noprint" style="margin-top:12px">
+      ${active && due > 0 ? `<button class="btn ok fit" data-act="layabono" data-id="${id}">Abonar</button>` : ''}
+      ${active && due === 0 ? `<button class="btn cel fit" data-act="laydeliver" data-id="${id}">Marcar entregado</button>` : ''}
+      <button class="btn gold fit" data-act="print">🖨 Imprimir</button>
+      ${active ? `<button class="btn red fit" data-act="laycancel" data-id="${id}">Cancelar apartado</button>` : ''}</div>
+    ${active && due > 0 ? '<p class="muted noprint">Para entregar, primero cobra el saldo pendiente con un abono.</p>' : ''}`);
 }
 function openTicket(id) {
   const t = S.db.tx.find(x => x.id === id); if (!t) return;
@@ -800,6 +927,55 @@ const forms = {
     const err = await mutate(st => { st.db.settings.catSubs = st.db.settings.catSubs || {}; if (sub) st.db.settings.catSubs[cat] = sub; else delete st.db.settings.catSubs[cat]; });
     toast(err || 'Subtítulo guardado');
   },
+  async laynew(f, d) {
+    const cid = d.get('cid'), due = d.get('due'), note = (d.get('note') || '').trim();
+    const items = []; let total = 0;
+    S.db.products.forEach(p => { const q = Math.floor(+d.get('q_' + p.id) || 0); if (q > 0) { items.push({id:p.id, name:p.name, qty:q, price:p.price}); total += q * p.price; } });
+    if (!items.length) return toast('Selecciona al menos un producto');
+    if (!due) return toast('Indica la fecha de entrega');
+    if (due < todayStr()) return toast('La fecha de entrega no puede ser anterior a hoy');
+    const amount = Math.max(0, Math.round(+d.get('amount') || 0)), method = d.get('method'), ref = (d.get('ref') || '').trim();
+    if (amount > total) return toast('El abono no puede ser mayor al total (' + COP(total) + ')');
+    if (amount > 0 && method === 'transferencia' && !ref) return toast('Indica la referencia de la transferencia');
+    const err = await mutate(st => {
+      if (!st.db.clients.some(c => c.id === cid)) return 'El cliente ya no existe';
+      for (const it of items) {
+        const p = st.db.products.find(x => x.id === it.id);
+        if (!p) return 'Producto ya no disponible: ' + it.name;
+        if (tracked(p) && p.stock < it.qty) return `Stock insuficiente de ${p.name} (quedan ${p.stock})`;
+      }
+      items.forEach(it => { const p = st.db.products.find(x => x.id === it.id); if (tracked(p)) p.stock -= it.qty; });
+      const now = Date.now();
+      st.db.layaways.push({id:uid(), clientId:cid, items, total, dueDate:due, note, status:'activo', created:now,
+        abonos: amount ? [{id:uid(), amount, method, ref, note:'Abono inicial', created:now}] : []});
+    });
+    if (err) return toast(err);
+    closeModal(); render(); toast('Apartado creado');
+  },
+  async layabono(f, d) {
+    const amount = Math.round(+d.get('amount')), method = d.get('method'), ref = (d.get('ref') || '').trim(), note = (d.get('note') || '').trim();
+    if (!(amount > 0)) return toast('Monto inválido');
+    if (method === 'transferencia' && !ref) return toast('Indica la referencia de la transferencia');
+    const err = await mutate(st => {
+      const l = st.db.layaways.find(x => x.id === f.dataset.id);
+      if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
+      const paid = (l.abonos || []).filter(a => !a.voided).reduce((s, a) => s + a.amount, 0);
+      if (amount > l.total - paid) return 'El abono supera el saldo (' + COP(l.total - paid) + ')';
+      l.abonos.push({id:uid(), amount, method, ref, note, created:Date.now()});
+    });
+    if (err) return toast(err);
+    closeModal(); render(); toast('Abono registrado');
+  },
+  async laydue(f, d) {
+    const due = d.get('due'); if (!due) return toast('Indica la fecha');
+    const err = await mutate(st => {
+      const l = st.db.layaways.find(x => x.id === f.dataset.id);
+      if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
+      l.dueDate = due;
+    });
+    if (err) return toast(err);
+    render(); openLayDetail(f.dataset.id); toast('Fecha actualizada');
+  },
   async settings(f, d) {
     const err = await mutate(st => { st.db.settings.bank = d.get('bank').trim(); st.db.settings.cash = d.get('cash').trim(); st.db.settings.tag = d.get('tag').trim(); });
     toast(err || 'Ajustes guardados');
@@ -853,6 +1029,48 @@ document.addEventListener('click', e => {
   else if (a === 'detail') openDetail(id);
   else if (a === 'confirm') openConfirm(id);
   else if (a === 'stock') openStock(id);
+  else if (a === 'laynew') openLayNew(id);
+  else if (a === 'layabono') openLayAbono(id);
+  else if (a === 'laydetail') openLayDetail(id);
+  else if (a === 'laydeliver') {
+    if (confirm('¿Marcar este apartado como entregado?')) run(async () => {
+      const err = await mutate(st => {
+        const l = st.db.layaways.find(x => x.id === id);
+        if (!l || l.status !== 'activo') return 'Este apartado ya no está activo';
+        const paid = (l.abonos || []).filter(x => !x.voided).reduce((s, x) => s + x.amount, 0);
+        if (paid < l.total) return 'Aún hay saldo pendiente: ' + COP(l.total - paid);
+        l.status = 'entregado'; l.delivered = Date.now();
+      });
+      if (err) return toast(err);
+      closeModal(); render(); toast('Apartado entregado ✅');
+    });
+  }
+  else if (a === 'laycancel') {
+    const l = layById(id); if (!l) return;
+    const paid = layPaid(l);
+    if (confirm('¿Cancelar este apartado? El stock reservado vuelve al inventario.' + (paid ? ' El cliente tiene ' + COP(paid) + ' abonados: devuélveselos aparte (quedan registrados en el historial).' : ''))) run(async () => {
+      const err = await mutate(st => {
+        const x = st.db.layaways.find(y => y.id === id);
+        if (!x || x.status !== 'activo') return 'Este apartado ya no está activo';
+        restock(st.db, x.items); x.status = 'cancelado'; x.cancelled = Date.now();
+      });
+      if (err) return toast(err);
+      closeModal(); render(); toast('Apartado cancelado');
+    });
+  }
+  else if (a === 'layvoid') {
+    const aid = b.dataset.aid;
+    if (confirm('¿Anular este abono? Quedará marcado como anulado en el historial.')) run(async () => {
+      const err = await mutate(st => {
+        const x = st.db.layaways.find(y => y.id === id);
+        const ab = x && x.status === 'activo' && x.abonos.find(z => z.id === aid);
+        if (!ab || ab.voided) return 'Abono no encontrado';
+        ab.voided = true; ab.voidedAt = Date.now();
+      });
+      if (err) return toast(err);
+      render(); openLayDetail(id);
+    });
+  }
   else if (a === 'ticket') openTicket(id);
   else if (a === 'print') window.print();
   else if (a === 'amt') { const i = $('input[name=amount]'); if (i) i.value = b.dataset.v; }
@@ -883,9 +1101,10 @@ document.addEventListener('click', e => {
   }
   else if (a === 'delclient') {
     const c = client(id); if (!c) return;
-    if (confirm(`¿Eliminar a ${c.name}? Se borrarán también sus movimientos.`)) run(async () => {
+    if (S.db.layaways.some(l => l.clientId === id && l.status === 'activo')) return toast('Tiene apartados activos: entrégalos o cancélalos antes de eliminarlo');
+    if (confirm(`¿Eliminar a ${c.name}? Se borrarán también sus movimientos y apartados.`)) run(async () => {
       const idh = await userHash(c.user);
-      const err = await mutate(st => { delete st.users[idh]; st.db.clients = st.db.clients.filter(x => x.id !== id); st.db.tx = st.db.tx.filter(t => t.clientId !== id); });
+      const err = await mutate(st => { delete st.users[idh]; st.db.clients = st.db.clients.filter(x => x.id !== id); st.db.tx = st.db.tx.filter(t => t.clientId !== id); st.db.layaways = st.db.layaways.filter(l => l.clientId !== id); });
       if (err) return toast(err); render();
     });
   }
@@ -905,6 +1124,7 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.matches('[data-search]')) { ui.q = t.value; render(); refocus('[data-search]'); }
+  else if (t.matches('[data-lsearch]')) { ui.lq = t.value; render(); refocus('[data-lsearch]'); }
   else if (t.matches('[data-psearch]')) { ui.pq = t.value; render(); refocus('[data-psearch]'); }
   else if (t.matches('[data-pcsearch]')) { ui.pcq = t.value; render(); refocus('[data-pcsearch]'); }
   else if (t.id === 'recv') { ui.precv = t.value; const c = $('#chg'); if (c) c.innerHTML = changeText(cashDue()); }
@@ -916,10 +1136,11 @@ document.addEventListener('change', e => {
   if (t.matches('[data-filter]')) { ui.filter = t.value; render(); }
   if (t.matches('[data-tfilter]')) { ui.tfilter = t.value; render(); }
   if (t.matches('[data-csort]')) { ui.csort = t.value; render(); }
+  if (t.matches('[data-lfilter]')) { ui.lfilter = t.value; render(); }
   if (t.name === 'method') {
     const tr = t.value === 'transferencia';
     $('#refbox').hidden = !tr; $('#payhint').textContent = tr ? S.db.settings.bank : S.db.settings.cash;
-    $('#refbox input').required = tr;
+    { const rb = $('#refbox input'); if (rb) rb.required = tr && !t.form.hasAttribute('data-optref'); }
   }
   if (t.matches('[data-import]') && t.files[0]) {
     const file = t.files[0]; t.value = '';

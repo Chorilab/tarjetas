@@ -177,4 +177,7 @@ body.busy::after{content:"Procesando…";position:fixed;inset:0;background:rgba(
 .mn-stats .tot .val{color:#FFCE00;font-size:2.1rem}
 .mn-toggle{background:#74ACDF;color:#0B0B0C;border:0;border-radius:8px;padding:10px 16px;font-weight:700;min-height:46px;white-space:nowrap}
 @media(max-width:420px){.mn-line{grid-template-columns:1fr auto}.mn-line .sb{grid-column:1/-1;text-align:left}}
+.lbar{height:10px;background:#ece7d9;border-radius:999px;overflow:hidden;margin-top:10px}
+.lbar i{display:block;height:100%;background:linear-gradient(90deg,var(--celeste),var(--ok));border-radius:999px}
+.lay.done{opacity:.75}
 @media print{body>*:not(#modal){display:none!important}.ov{position:static;background:none;padding:0;display:block}.md{box-shadow:none;max-width:100%;padding:0}.x,.noprint{display:none!important}}
