@@ -12,6 +12,7 @@ Web estática para GitHub Pages. Los datos se cifran en el navegador (AES-GCM 25
 - **Inventario**: stock por producto (opcional), alerta de stock bajo, entradas, mermas y conteos con historial. Las ventas descuentan stock y se devuelve al rechazar o anular.
 - **Clientes**: búsqueda, orden por saldo o última visita, ficha con totales, ticket promedio, notas internas y edición.
 - **Apartados**: cada apartado se asocia a un cliente, con productos, abonos (efectivo, transferencia o saldo de la tarjeta de regalo, que el cliente confirma con su clave), saldo y fecha de entrega. El stock se reserva al crearlo; se entrega cuando el saldo llega a $0 y se puede cancelar (el stock vuelve; lo pagado con tarjeta regresa al saldo y lo pagado en caja queda como devolución pendiente). Los cancelados siguen en la lista. El cliente los ve en "Mis apartados". Hay comprobante imprimible.
+- **Rifas**: el administrador crea una rifa con su periodo, 10, 100 o 1000 números (se numeran desde 0: 0–9, 00–99 o 000–999), premio y reglas, y asigna a cada cliente cuántos números puede elegir. El cliente los elige en su pestaña "Rifas" mientras la rifa esté activa; los números elegidos quedan firmes (solo el administrador puede liberarlos). Se puede cerrar la rifa y registrar el número ganador.
 - **Resumen**: ventas del día, ticket promedio, más vendidos y alertas de inventario.
 
 ## Puesta en marcha

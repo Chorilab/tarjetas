@@ -91,13 +91,15 @@ const defaults = () => ({
   clients: [],
   tx: [],
   stockLog: [],
-  layaways: []
+  layaways: [],
+  raffles: []
 });
 /* Completa campos nuevos en bases creadas con versiones anteriores. */
 function normalize(db) {
   db.settings = db.settings || {}; db.settings.bank ??= ''; db.settings.cash ??= '';
   db.settings.tag ??= 'Embutidos artesanales de calidad. Chorizo de 21 cm, pan de masa madre y chimichurri hecho en casa.'; db.settings.catSubs ??= {};
   db.products = db.products || []; db.clients = db.clients || []; db.tx = db.tx || []; db.stockLog = db.stockLog || []; db.layaways = db.layaways || []; db.layaways.forEach(l => { l.abonos = l.abonos || []; });
+  db.raffles = db.raffles || []; db.raffles.forEach(r => { r.grants = r.grants || []; r.picks = r.picks || []; r.closed = !!r.closed; r.win = r.win || null; r.prize = r.prize || ''; r.desc = r.desc || ''; });
   db.products.forEach(p => {
     if (p.active === undefined) p.active = true;
     if (p.stock === undefined) p.stock = null;
@@ -110,7 +112,7 @@ function normalize(db) {
 let S = {rev:0, users:{}, db:null, dek:null, kb64:null, me:null};
 const ui = {
   view:'loading', tab:'caja', ctab:'tarjeta', filter:'todas', tfilter:'todos', q:'', csort:'name', busy:false, dirty:false, error:'',
-  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false, lfilter:'todos', lq:''
+  cart:{}, pq:'', pcat:'todas', pmode:'mostrador', pmethod:'efectivo', pclient:null, pcq:'', precv:'', pnote:'', mcart:{}, mopen:false, mpreview:false, lfilter:'todos', lq:'', rid:null, crid:null, rpick:[], rq:'', rfree:false
 };
 
 const client = id => S.db.clients.find(c => c.id === id);
@@ -242,8 +244,8 @@ function adminView() {
   const low = S.db.products.filter(p => ['low', 'out'].includes(stockState(p))).length;
   const pend = S.db.tx.filter(t => t.status === 'pendiente').length;
   const lay = S.db.layaways.filter(l => l.status === 'activo' && daysTo(l.dueDate) <= 0).length;
-  const tabs = [['caja','🧾 Caja'],['resumen','Resumen'],['clientes','Clientes'],['apartados','Apartados' + (lay ? ` ⏰${lay}` : '')],['movimientos','Movimientos' + (pend ? ` (${pend})` : '')],['menu','Menú'],['inventario','Inventario' + (low ? ` ⚠${low}` : '')],['ajustes','Ajustes']];
-  const body = {caja:adminCaja, resumen:adminResumen, clientes:adminClientes, apartados:adminApartados, movimientos:adminMov, menu:adminMenu, inventario:adminInventario, ajustes:adminAjustes}[ui.tab]();
+  const tabs = [['caja','🧾 Caja'],['resumen','Resumen'],['clientes','Clientes'],['apartados','Apartados' + (lay ? ` ⏰${lay}` : '')],['rifas','Rifas'],['movimientos','Movimientos' + (pend ? ` (${pend})` : '')],['menu','Menú'],['inventario','Inventario' + (low ? ` ⚠${low}` : '')],['ajustes','Ajustes']];
+  const body = {caja:adminCaja, resumen:adminResumen, clientes:adminClientes, apartados:adminApartados, rifas:adminRifas, movimientos:adminMov, menu:adminMenu, inventario:adminInventario, ajustes:adminAjustes}[ui.tab]();
   return topbar('Administrador') + `<main class="${ui.tab === 'caja' ? 'wide' : ''}">
     <div class="tabs">${tabs.map(([k, l]) => `<button class="${ui.tab===k?'on':''}" data-act="tab" data-v="${k}">${l}</button>`).join('')}</div>${body}</main>`;
 }
@@ -494,6 +496,135 @@ function clientApartados(c) {
     + (list.length ? list.map(l => layCard(l, 'client')).join('') : '<div class="card"><div class="empty">No tienes apartados.</div></div>');
 }
 
+/* ----- Rifas ----- */
+const raffleById = id => S.db.raffles.find(r => r.id === id);
+const raffleState = r => r.win ? 'sorteada' : r.closed ? 'cerrada' : todayStr() < r.start ? 'programada' : todayStr() > r.end ? 'finalizada' : 'activa';
+const rRank = {activa:0, programada:1, finalizada:2, sorteada:3, cerrada:4};
+const rW = r => String(r.size - 1).length;
+const rNum = (r, n) => String(n).padStart(rW(r), '0');
+const rGrant = (r, cid) => r.grants.filter(g => g.clientId === cid).reduce((s, g) => s + g.qty, 0);
+const rPicksOf = (r, cid) => r.picks.filter(p => p.clientId === cid).map(p => p.n).sort((a, b) => a - b);
+const rLeft = (r, cid) => rGrant(r, cid) - rPicksOf(r, cid).length;
+const rGranted = r => r.grants.reduce((s, g) => s + g.qty, 0);
+const rOwner = (r, n) => r.picks.find(p => p.n === n);
+const rSort = (a, b) => rRank[raffleState(a)] - rRank[raffleState(b)] || b.start.localeCompare(a.start);
+const rBadge = r => ({activa:'<span class="badge b-ok">Activa</span>', programada:'<span class="badge b-low">Programada</span>', finalizada:'<span class="badge b-use">Periodo terminado</span>', sorteada:'<span class="badge b-confirmada">Con ganador</span>', cerrada:'<span class="badge b-anulada">Cerrada</span>'})[raffleState(r)];
+const rRange = r => `${rNum(r, 0)}–${rNum(r, r.size - 1)}`;
+const nchips = (r, list) => list.length ? `<div class="nchips">${list.map(n => `<span class="nchip">${rNum(r, n)}</span>`).join('')}</div>` : '';
+const rHidden = (label, cls) => !!((ui.rq && !label.includes(ui.rq)) || (ui.rfree && /taken|mine|occ/.test(cls)));
+function rFilter() {
+  const qi = $('[data-rsearch]'), fi = $('[data-rfree]');
+  ui.rq = qi ? qi.value.trim() : ''; ui.rfree = !!(fi && fi.checked);
+  document.querySelectorAll('.rn').forEach(b => { b.hidden = rHidden(b.textContent, b.className); });
+}
+function updPick(r) {
+  const left = rLeft(r, S.me.cid);
+  document.querySelectorAll('.rn.sel').forEach(x => x.classList.remove('sel'));
+  ui.rpick.forEach(n => { const x = document.querySelector(`.rn[data-n="${n}"]`); if (x) x.classList.add('sel'); });
+  const c = $('#rcnt'); if (c) c.innerHTML = `<b>${ui.rpick.length}</b> de ${left} por elegir` + (ui.rpick.length ? ' · ' + ui.rpick.map(n => rNum(r, n)).join(', ') : '');
+  const bt = $('[data-act=rconfirm]'); if (bt) bt.disabled = !ui.rpick.length;
+}
+function rCard(r) {
+  const st = raffleState(r), pct = Math.round(r.picks.length / r.size * 100), granted = rGranted(r);
+  return `<div class="card lay ${['activa', 'programada'].includes(st) ? '' : 'done'}"><div class="row" style="align-items:flex-start"><div style="flex:2 1 220px">
+    <b>🎟 ${esc(r.name)}</b> ${rBadge(r)}<br><span class="muted">${r.prize ? 'Premio: ' + esc(r.prize) + ' · ' : ''}${r.size} números (${rRange(r)})</span></div>
+    <div class="fit" style="text-align:right"><div class="muted">Periodo</div><b>${fday(r.start)}</b><br><span class="muted">hasta</span> <b>${fday(r.end)}</b></div></div>
+    <div class="lbar" role="img" aria-label="Elegidos ${pct}%"><i style="width:${pct}%"></i></div>
+    <div class="row" style="margin-top:8px"><div><span class="muted">Elegidos</span><br><b>${r.picks.length} / ${r.size}</b></div>
+      <div><span class="muted">Cupos asignados</span><br><b>${granted}</b></div><div><span class="muted">Por elegir</span><br><b>${granted - r.picks.length}</b></div>
+      <div class="fit"><button class="btn sm cel" data-act="ropen" data-id="${r.id}">Gestionar</button></div></div></div>`;
+}
+function adminRifas() {
+  const r = ui.rid && raffleById(ui.rid);
+  if (r) return adminRifaDetail(r);
+  const list = [...S.db.raffles].sort(rSort), act = list.filter(x => raffleState(x) === 'activa');
+  return `<div class="grid g4" style="margin-bottom:16px">
+    <div class="stat"><span>Rifas activas</span><b>${act.length}</b></div>
+    <div class="stat"><span>Números elegidos (activas)</span><b>${act.reduce((s, x) => s + x.picks.length, 0)}</b></div>
+    <div class="stat"><span>Cupos sin usar (activas)</span><b>${act.reduce((s, x) => s + rGranted(x) - x.picks.length, 0)}</b></div></div>
+    <div class="card"><div class="row"><h3 style="flex:2 1 160px">Rifas (${list.length})</h3><div class="fit"><button class="btn gold" data-act="rnew">+ Nueva rifa</button></div></div>
+      <p class="muted">Crea una rifa con su periodo, la cantidad de números (10, 100 o 1000) y sus reglas. Luego asigna a cada cliente cuántos números puede elegir: él los escoge desde su cuenta, en la pestaña Rifas, mientras la rifa esté activa.</p></div>
+    ${list.length ? list.map(rCard).join('') : '<div class="card"><div class="empty">Aún no hay rifas.</div></div>'}`;
+}
+function adminRifaDetail(r) {
+  const st = raffleState(r), granted = rGranted(r), pct = Math.round(r.picks.length / r.size * 100);
+  const cl = [...new Set(r.grants.map(g => g.clientId))].map(client).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const hist = [...r.grants].sort((a, b) => b.created - a.created).slice(0, 12);
+  const wo = r.win && rOwner(r, r.win.n), wc = wo && client(wo.clientId);
+  const canGrant = ['activa', 'programada'].includes(st);
+  return `<div class="row" style="margin-bottom:12px"><div class="fit"><button class="btn ghost" data-act="rback">← Rifas</button></div></div>
+    <div class="card"><div class="row" style="align-items:flex-start"><div style="flex:2 1 260px"><h3>🎟 ${esc(r.name)} ${rBadge(r)}</h3>
+      <div class="muted">${r.prize ? 'Premio: <b>' + esc(r.prize) + '</b> · ' : ''}${r.size} números (${rRange(r)}) · ${fday(r.start)} → ${fday(r.end)}</div></div>
+      <div class="fit" style="white-space:nowrap"><button class="btn sm cel" data-act="redit" data-id="${r.id}">Editar</button>
+      ${r.win ? '' : `<button class="btn sm ghost" data-act="rclose" data-id="${r.id}">${r.closed ? 'Reabrir' : 'Cerrar rifa'}</button>`}
+      <button class="btn sm ghost" data-act="rdelete" data-id="${r.id}" aria-label="Eliminar">🗑</button></div></div>
+      <div class="cat">Descripción y reglas</div><div class="rules">${r.desc ? esc(r.desc) : '<span class="muted">Sin descripción.</span>'}</div>
+      <div class="lbar" role="img" aria-label="Elegidos ${pct}%"><i style="width:${pct}%"></i></div>
+      <div class="row" style="margin-top:8px"><div><span class="muted">Elegidos</span><br><b>${r.picks.length} / ${r.size}</b></div>
+        <div><span class="muted">Cupos asignados</span><br><b>${granted}</b></div><div><span class="muted">Por elegir</span><br><b>${granted - r.picks.length}</b></div>
+        <div><span class="muted">Sin asignar</span><br><b>${r.size - granted}</b></div></div></div>
+    <div class="card"><div class="row" style="margin-bottom:8px"><h3 style="flex:2 1 160px">Cupos por cliente</h3>
+      <div class="fit"><button class="btn gold" data-act="rgrant" data-id="${r.id}" ${canGrant ? '' : 'disabled'}>+ Asignar cupos</button></div></div>
+      ${canGrant ? '' : '<p class="muted">Esta rifa ya no admite nuevos cupos. Puedes reabrirla o ajustar sus fechas con Editar.</p>'}
+      ${cl.length ? `<div class="tw"><table><thead><tr><th>Cliente</th><th>Aprobados</th><th>Elegidos</th><th>Por elegir</th><th>Números</th><th></th></tr></thead><tbody>
+      ${cl.map(c => `<tr><td><b>${esc(c.name)}</b></td><td>${rGrant(r, c.id)}</td><td>${rPicksOf(r, c.id).length}</td><td><b>${rLeft(r, c.id)}</b></td><td>${nchips(r, rPicksOf(r, c.id)) || '<span class="muted">—</span>'}</td>
+        <td><button class="btn sm ghost" data-act="rgrant" data-id="${r.id}" data-cid="${c.id}" ${canGrant ? '' : 'disabled'}>Ajustar</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no asignas cupos a ningún cliente.</div>'}
+      ${hist.length ? `<div class="cat">Últimas asignaciones</div>${hist.map(g => `<div class="prow"><div class="n">${esc((client(g.clientId) || {}).name || 'cliente eliminado')}<div class="muted">${fdate(g.created)}${g.note ? ' · ' + esc(g.note) : ''}</div></div><b class="${g.qty > 0 ? 'pos' : 'neg'}">${g.qty > 0 ? '+' : ''}${g.qty}</b></div>`).join('')}` : ''}</div>
+    <div class="card"><h3>Número ganador</h3>
+      ${r.win ? `<div class="hint" style="margin:8px 0">🏆 <b>${rNum(r, r.win.n)}</b> · ${wc ? esc(wc.name) : 'Nadie eligió este número'}</div>` : ''}
+      ${st === 'programada' ? '<p class="muted">La rifa aún no empieza.</p>' : `<form data-form="rwin" data-id="${r.id}" class="row"><div><label>${r.win ? 'Cambiar el número ganador' : 'Registrar el número ganador'} (${rRange(r)})</label><input name="n" type="number" min="0" max="${r.size - 1}" step="1" required></div>
+        <div class="fit"><button class="btn sm cel">Guardar</button>${r.win ? ' <button type="button" class="btn sm ghost" data-act="rwinclear" data-id="' + r.id + '">Quitar ganador</button>' : ''}</div></form>`}</div>
+    <div class="card"><h3>Números</h3><p class="muted">Los amarillos ya fueron elegidos: toca uno para ver quién lo tiene o liberarlo.</p>
+      <div class="rgrid ${r.size === 10 ? 'big' : ''}">${Array.from({length: r.size}, (_, n) => { const o = rOwner(r, n), c = o && client(o.clientId);
+        return o ? `<button class="rn occ" data-act="rnumadm" data-id="${r.id}" data-n="${n}" title="${esc(c ? c.name : 'cliente eliminado')}">${rNum(r, n)}</button>` : `<button class="rn" disabled>${rNum(r, n)}</button>`; }).join('')}</div></div>`;
+}
+function rClientCard(c, r) {
+  const st = raffleState(r), mine = rPicksOf(r, c.id), g = rGrant(r, c.id), left = g - mine.length;
+  const wonMine = r.win && mine.includes(r.win.n);
+  return `<div class="card lay ${['activa', 'programada'].includes(st) ? '' : 'done'}"><div class="row" style="align-items:flex-start"><div style="flex:2 1 220px">
+    <b>🎟 ${esc(r.name)}</b> ${rBadge(r)}<br><span class="muted">${r.prize ? 'Premio: ' + esc(r.prize) + ' · ' : ''}${r.size} números (${rRange(r)})</span></div>
+    <div class="fit" style="text-align:right"><div class="muted">Periodo</div><b>${fday(r.start)}</b><br><span class="muted">hasta</span> <b>${fday(r.end)}</b></div></div>
+    ${r.win ? `<div class="hint">🏆 Número ganador: <b>${rNum(r, r.win.n)}</b>${wonMine ? ' · <b>¡Es tuyo, felicitaciones!</b>' : ''}</div>` : ''}
+    <details style="margin-top:8px"><summary>Ver descripción y reglas</summary><div class="rules" style="margin-top:6px">${r.desc ? esc(r.desc) : 'Sin descripción.'}</div></details>
+    <div class="row" style="margin-top:8px"><div><span class="muted">Cupos aprobados</span><br><b>${g}</b></div><div><span class="muted">Elegidos</span><br><b>${mine.length}</b></div><div><span class="muted">Por elegir</span><br><b class="${left > 0 && st === 'activa' ? 'pos' : ''}">${left}</b></div>
+      <div class="fit"><button class="btn sm ${st === 'activa' && left > 0 ? 'ok' : 'ghost'}" data-act="cropen" data-id="${r.id}">${st === 'activa' && left > 0 ? 'Elegir mis números' : 'Ver números'}</button></div></div>
+    ${mine.length ? `<div style="margin-top:8px"><span class="muted">Mis números</span>${nchips(r, mine)}</div>` : ''}</div>`;
+}
+function clientRifas(c) {
+  const r = ui.crid && raffleById(ui.crid);
+  if (r) return clientRifaDetail(c, r);
+  const list = [...S.db.raffles].sort(rSort);
+  return `<p class="muted" style="margin-top:0">Aquí ves las rifas de CHORILAB, tus cupos aprobados y eliges tus números.</p>`
+    + (list.length ? list.map(x => rClientCard(c, x)).join('') : '<div class="card"><div class="empty">Por ahora no hay rifas.</div></div>');
+}
+function clientRifaDetail(c, r) {
+  const st = raffleState(r), mine = rPicksOf(r, c.id), g = rGrant(r, c.id), left = g - mine.length, canPick = st === 'activa' && left > 0;
+  ui.rpick = ui.rpick.filter(n => !rOwner(r, n)).slice(0, Math.max(0, left));
+  const msg = st === 'programada' ? `La elección de números abre el ${fday(r.start)}.`
+    : st === 'finalizada' ? 'El periodo de esta rifa terminó: ya no se pueden elegir números.'
+    : st === 'cerrada' ? 'Esta rifa está cerrada.' : st === 'sorteada' ? 'Esta rifa ya tiene número ganador.'
+    : g === 0 ? 'Aún no tienes cupos aprobados en esta rifa. Pídelos en CHORILAB y aparecerán aquí.'
+    : left === 0 ? 'Ya elegiste todos tus números. ¡Mucha suerte! 🍀' : '';
+  const wonMine = r.win && mine.includes(r.win.n);
+  return `<div class="row" style="margin-bottom:12px"><div class="fit"><button class="btn ghost" data-act="rback">← Rifas</button></div></div>
+    <div class="card"><h3>🎟 ${esc(r.name)} ${rBadge(r)}</h3>
+      <div class="muted">${r.prize ? 'Premio: <b>' + esc(r.prize) + '</b> · ' : ''}${r.size} números (${rRange(r)}) · ${fday(r.start)} → ${fday(r.end)}</div>
+      ${r.win ? `<div class="hint">🏆 Número ganador: <b>${rNum(r, r.win.n)}</b>${wonMine ? ' · <b>¡Es tuyo, felicitaciones!</b>' : ''}</div>` : ''}
+      <div class="cat">Descripción y reglas</div><div class="rules">${r.desc ? esc(r.desc) : 'Sin descripción.'}</div>
+      <div class="row" style="margin-top:10px"><div><span class="muted">Cupos aprobados</span><br><b>${g}</b></div><div><span class="muted">Elegidos</span><br><b>${mine.length}</b></div><div><span class="muted">Por elegir</span><br><b class="${canPick ? 'pos' : ''}">${left}</b></div></div>
+      ${mine.length ? `<div style="margin-top:8px"><span class="muted">Mis números</span>${nchips(r, mine)}</div>` : ''}
+      ${msg ? `<div class="hint">${msg}</div>` : ''}</div>
+    <div class="card"><h3>Números</h3>
+      <p class="muted">${canPick ? 'Toca los números que quieras (hasta ' + left + '). Una vez confirmados no se pueden cambiar.' : 'Verde: tuyos · Gris tachado: ya elegidos por otras personas.'}</p>
+      <div class="row"><div><input data-rsearch type="search" inputmode="numeric" placeholder="Buscar número…" value="${esc(ui.rq)}" autocomplete="off"></div>
+        <label class="fit chk"><input type="checkbox" data-rfree ${ui.rfree ? 'checked' : ''}> Solo libres</label>
+        ${canPick ? '<div class="fit"><button class="btn sm ghost" data-act="rrandom">🎲 Al azar</button> <button class="btn sm ghost" data-act="rclear">Limpiar</button></div>' : ''}</div>
+      <div class="rgrid ${r.size === 10 ? 'big' : ''}">${Array.from({length: r.size}, (_, n) => {
+        const o = rOwner(r, n), cls = mine.includes(n) ? 'mine' : o ? 'taken' : ui.rpick.includes(n) ? 'sel' : '', lab = rNum(r, n);
+        return `<button class="rn ${cls}" data-act="rpick" data-n="${n}" ${canPick && !o ? '' : 'disabled'} ${rHidden(lab, cls) ? 'hidden' : ''}>${lab}</button>`; }).join('')}</div>
+      ${canPick ? `<div class="rbar"><div id="rcnt"><b>${ui.rpick.length}</b> de ${left} por elegir${ui.rpick.length ? ' · ' + ui.rpick.map(n => rNum(r, n)).join(', ') : ''}</div><button class="btn ok" data-act="rconfirm" ${ui.rpick.length ? '' : 'disabled'}>Confirmar mis números</button></div>` : ''}</div>`;
+}
+
 /* ----- Inventario ----- */
 function adminInventario() {
   const ps = [...S.db.products].sort((a, b) => a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name));
@@ -604,9 +735,10 @@ function clientView() {
   const pend = pending(c.id);
   const pendAb = pendingAbonos(c.id);
   const hist = S.db.tx.filter(t => t.clientId === c.id && t.status !== 'pendiente').sort((a, b) => b.created - a.created);
-  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length + pendAb.length ? ` (${pend.length + pendAb.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button><button class="${ui.ctab==='apartados'?'on':''}" data-act="ctab" data-v="apartados">Mis apartados${(n => n ? ' (' + n + ')' : '')(S.db.layaways.filter(l => l.clientId === c.id && l.status === 'activo').length)}</button></div>`;
+  const tabs = `<div class="tabs"><button class="${ui.ctab==='tarjeta'?'on':''}" data-act="ctab" data-v="tarjeta">Mi tarjeta${pend.length + pendAb.length ? ` (${pend.length + pendAb.length})` : ''}</button><button class="${ui.ctab==='menu'?'on':''}" data-act="ctab" data-v="menu">Menú</button><button class="${ui.ctab==='apartados'?'on':''}" data-act="ctab" data-v="apartados">Mis apartados${(n => n ? ' (' + n + ')' : '')(S.db.layaways.filter(l => l.clientId === c.id && l.status === 'activo').length)}</button><button class="${ui.ctab==='rifas'?'on':''}" data-act="ctab" data-v="rifas">Rifas${(n => n ? ' (' + n + ')' : '')(S.db.raffles.filter(r => raffleState(r) === 'activa' && rLeft(r, c.id) > 0).length)}</button></div>`;
   if (ui.ctab === 'menu') return topbar(c.name) + `<main>${tabs}${menuHTML()}</main>`;
   if (ui.ctab === 'apartados') return topbar(c.name) + `<main>${tabs}${clientApartados(c)}</main>`;
+  if (ui.ctab === 'rifas') return topbar(c.name) + `<main>${tabs}${clientRifas(c)}</main>`;
   return topbar(c.name) + `<main>${tabs}<div class="grid g2" style="align-items:start">
     <div>${cardHTML(c)}${reserved(c.id) ? `<p class="muted">Hay ${COP(reserved(c.id))} por confirmar (consumos y abonos de apartados).</p>` : ''}</div>
     <div class="card"><h3>Por confirmar (${pend.length + pendAb.length})</h3>
@@ -717,12 +849,12 @@ function openStock(id) {
     <label>Motivo (opcional)</label><input name="note" placeholder="Compra a proveedor, conteo, merma…">
     <button class="btn cel" style="width:100%;margin-top:12px">Guardar</button></form>`);
 }
-function lcList(q) {
+function lcList(q, plain) {
   q = (q || '').toLowerCase();
   const res = S.db.clients.filter(c => !q || (c.name + ' ' + c.user + ' ' + (c.phone || '') + ' ' + c.cardNo).toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 6);
-  return res.length ? res.map(c => `<button type="button" class="crow" data-act="lcpick" data-id="${c.id}"><span>${esc(c.name)}<small class="muted"> ${esc(c.cardNo)}${c.phone ? ' · ' + esc(c.phone) : ''}</small></span><b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b></button>`).join('') : '<div class="empty">Sin resultados</div>';
+  return res.length ? res.map(c => `<button type="button" class="crow" data-act="lcpick" data-id="${c.id}"><span>${esc(c.name)}<small class="muted"> ${esc(c.cardNo)}${c.phone ? ' · ' + esc(c.phone) : ''}</small></span>${plain ? '' : `<b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b>`}</button>`).join('') : '<div class="empty">Sin resultados</div>';
 }
-const lcSel = c => `<b>${esc(c.name)}</b> · ${esc(c.cardNo)} · saldo en tarjeta <b>${COP(Math.max(0, balance(c.id) - reserved(c.id)))}</b> <button type="button" class="btn sm ghost" data-act="lcchange" style="margin-left:6px">Cambiar</button>`;
+const lcSel = (c, plain) => `<b>${esc(c.name)}</b> · ${esc(c.cardNo)}${plain ? '' : ' · saldo en tarjeta <b>' + COP(Math.max(0, balance(c.id) - reserved(c.id))) + '</b>'} <button type="button" class="btn sm ghost" data-act="lcchange" style="margin-left:6px">Cambiar</button>`;
 function updCardHint() {
   const f = $('form[data-form=laynew]'); if (!f) return;
   const c = client(f.elements.cid.value);
@@ -833,6 +965,44 @@ function openLayDetail(id) {
       <button class="btn gold fit" data-act="print">🖨 Imprimir</button>
       ${adm && active ? `<button class="btn red fit" data-act="laycancel" data-id="${id}">Cancelar apartado</button>` : ''}</div>
     ${adm && active && due > 0 ? '<p class="muted noprint">Para entregar, primero cobra el saldo pendiente con un abono.</p>' : ''}`);
+}
+const pickerHTML = (pre, plain) => `<input type="hidden" name="cid" value="${pre ? pre.id : ''}">
+    <div id="lcsel" class="hint" style="margin-top:0" ${pre ? '' : 'hidden'}>${pre ? lcSel(pre, plain) : ''}</div>
+    <div id="lcbox" ${pre ? 'hidden' : ''}><input data-lcsearch type="search" placeholder="Buscar cliente por nombre, usuario, teléfono o tarjeta" autocomplete="off"><div class="clist" id="lclist">${lcList('', plain)}</div></div>`;
+function openRifaForm(id) {
+  const r = id && raffleById(id);
+  const v = r || {name:'', prize:'', desc:'', size:100, start:todayStr(), end:dstr(Date.now() + 14 * 864e5)};
+  modal(r ? 'Editar rifa' : 'Nueva rifa', `<form data-form="rifa" ${r ? `data-id="${r.id}"` : ''}>
+    <label>Nombre de la rifa</label><input name="name" value="${esc(v.name)}" required placeholder="Ej. Rifa de Navidad">
+    <label>Premio (opcional)</label><input name="prize" value="${esc(v.prize)}" placeholder="Ej. Cena para 4 personas">
+    <label>Descripción y reglas</label><textarea name="desc" rows="6" placeholder="Ej. Cada compra de $30.000 da derecho a un número. El ganador es quien tenga el número que coincida con las últimas cifras de la lotería del viernes…">${esc(v.desc)}</textarea>
+    <label>Cantidad de números</label>
+    <div class="radio">${[[10, '10 · 0 a 9'], [100, '100 · 00 a 99'], [1000, '1000 · 000 a 999']].map(([n, t]) => `<label><input type="radio" name="size" value="${n}" ${v.size === n ? 'checked' : ''}> ${t}</label>`).join('')}</div>
+    <div class="row"><div><label>Empieza</label><input type="date" name="start" value="${esc(v.start)}" required></div><div><label>Termina</label><input type="date" name="end" value="${esc(v.end)}" required></div></div>
+    <p class="muted">Los clientes solo pueden elegir números entre esas dos fechas (ambas incluidas). ${r && r.picks.length ? 'Ya hay números elegidos: no se puede cambiar la cantidad de números.' : ''}</p>
+    <button class="btn gold" style="width:100%">${r ? 'Guardar cambios' : 'Crear rifa'}</button></form>`);
+}
+function openRifaGrant(rid, cid) {
+  const r = raffleById(rid); if (!r) return;
+  if (!['activa', 'programada'].includes(raffleState(r))) return toast('Esta rifa ya no admite asignar cupos');
+  if (!S.db.clients.length) return toast('Primero crea un cliente');
+  const pre = cid && client(cid);
+  modal('Cupos · ' + esc(r.name), `<form data-form="rgrant" data-id="${rid}" data-plain>
+    <div class="hint" style="margin-top:0">Números sin asignar: <b>${r.size - rGranted(r)}</b> de ${r.size}</div>
+    <label>Cliente</label>${pickerHTML(pre, true)}
+    <label>Acción</label>
+    <div class="radio"><label><input type="radio" name="mode" value="add" checked> ➕ Agregar cupos</label><label><input type="radio" name="mode" value="remove"> ➖ Quitar cupos</label></div>
+    <label>Cantidad de números</label><input name="qty" type="number" min="1" max="${r.size}" step="1" required>
+    <label>Nota (opcional)</label><input name="note" placeholder="Ej. compró 3 combos">
+    <p class="muted">El cliente elige esos números desde su cuenta, en la pestaña Rifas, mientras la rifa esté activa.</p>
+    <button class="btn gold" style="width:100%">Guardar</button></form>`);
+}
+function openRifaNum(rid, n) {
+  const r = raffleById(rid), o = r && rOwner(r, n); if (!r || !o) return;
+  const c = client(o.clientId);
+  modal('Número ' + rNum(r, n), `<p>Lo tiene <b>${esc(c ? c.name : 'un cliente eliminado')}</b>${c ? ' (' + esc(c.cardNo) + ')' : ''}.</p>
+    <p class="muted">Elegido el ${fdate(o.created)}. Si lo liberas, el cliente recupera ese cupo y puede elegir otro número.</p>
+    <div class="row"><button class="btn red fit" data-act="rrelease" data-id="${rid}" data-n="${n}">Liberar número</button><button class="btn ghost fit" data-act="close">Cerrar</button></div>`);
 }
 function openTicket(id) {
   const t = S.db.tx.find(x => x.id === id); if (!t) return;
@@ -1084,6 +1254,62 @@ const forms = {
     if (err) return toast(err);
     render(); openLayDetail(f.dataset.id); toast('Fecha actualizada');
   },
+  async rifa(f, d) {
+    const id = f.dataset.id, nid = uid();
+    const name = d.get('name').trim(), prize = d.get('prize').trim(), desc = d.get('desc').trim(), size = +d.get('size'), start = d.get('start'), end = d.get('end');
+    if (!name) return toast('Escribe el nombre de la rifa');
+    if (![10, 100, 1000].includes(size)) return toast('Elige 10, 100 o 1000 números');
+    if (!start || !end) return toast('Indica el periodo de la rifa');
+    if (end < start) return toast('La fecha final no puede ser anterior a la inicial');
+    if (!id && end < todayStr()) return toast('La rifa ya estaría terminada: elige una fecha final desde hoy');
+    const err = await mutate(st => {
+      if (id) {
+        const r = st.db.raffles.find(x => x.id === id); if (!r) return 'La rifa ya no existe';
+        if (size !== r.size) {
+          if (r.picks.length) return 'No puedes cambiar la cantidad de números: ya hay números elegidos';
+          if (rGranted(r) > size) return 'Hay ' + rGranted(r) + ' cupos asignados, más que los ' + size + ' números';
+          r.size = size;
+        }
+        Object.assign(r, {name, prize, desc, start, end});
+      } else st.db.raffles.push({id:nid, name, prize, desc, size, start, end, closed:false, win:null, grants:[], picks:[], created:Date.now()});
+    });
+    if (err) return toast(err);
+    if (!id) ui.rid = nid;
+    closeModal(); render(); toast(id ? 'Rifa actualizada' : 'Rifa creada: ahora asigna cupos a tus clientes');
+  },
+  async rgrant(f, d) {
+    const rid = f.dataset.id, cid = d.get('cid'), mode = d.get('mode'), qty = Math.floor(+d.get('qty')), note = (d.get('note') || '').trim();
+    if (!cid || !client(cid)) return toast('Elige el cliente');
+    if (!(qty > 0)) return toast('Indica una cantidad mayor a 0');
+    const err = await mutate(st => {
+      const r = st.db.raffles.find(x => x.id === rid); if (!r) return 'La rifa ya no existe';
+      if (!['activa', 'programada'].includes(raffleState(r))) return 'Esta rifa ya no admite asignar cupos';
+      if (!st.db.clients.some(c => c.id === cid)) return 'El cliente ya no existe';
+      if (mode === 'remove') {
+        const free = rGrant(r, cid) - rPicksOf(r, cid).length;
+        if (qty > free) return 'Solo puedes quitar ' + Math.max(0, free) + ' cupo(s): los demás ya fueron elegidos';
+        r.grants.push({id:uid(), clientId:cid, qty:-qty, note, created:Date.now()});
+      } else {
+        const free = r.size - rGranted(r);
+        if (qty > free) return 'Solo quedan ' + free + ' número(s) sin asignar en esta rifa';
+        r.grants.push({id:uid(), clientId:cid, qty, note, created:Date.now()});
+      }
+    });
+    if (err) return toast(err);
+    closeModal(); render(); toast(mode === 'remove' ? 'Cupos quitados' : 'Cupos asignados: el cliente ya puede elegir sus números');
+  },
+  async rwin(f, d) {
+    if (d.get('n') === '') return toast('Escribe el número ganador');
+    const n = Math.floor(+d.get('n'));
+    const err = await mutate(st => {
+      const r = st.db.raffles.find(x => x.id === f.dataset.id); if (!r) return 'La rifa ya no existe';
+      if (raffleState(r) === 'programada') return 'La rifa aún no empieza';
+      if (!Number.isInteger(n) || n < 0 || n >= r.size) return 'El número debe estar entre ' + rNum(r, 0) + ' y ' + rNum(r, r.size - 1);
+      r.win = {n, created:Date.now()};
+    });
+    if (err) return toast(err);
+    render(); toast('Número ganador registrado');
+  },
   async settings(f, d) {
     const err = await mutate(st => { st.db.settings.bank = d.get('bank').trim(); st.db.settings.cash = d.get('cash').trim(); st.db.settings.tag = d.get('tag').trim(); });
     toast(err || 'Ajustes guardados');
@@ -1130,8 +1356,8 @@ document.addEventListener('click', e => {
   else if (a === 'boot') boot();
   else if (a === 'logout') logout();
   else if (a === 'reload') run(async () => { await refresh(); render(); toast('Datos actualizados'); });
-  else if (a === 'tab') { ui.tab = b.dataset.v; ui.q = ''; ui.mpreview = false; render(); }
-  else if (a === 'ctab') { ui.ctab = b.dataset.v; render(); }
+  else if (a === 'tab') { ui.tab = b.dataset.v; ui.q = ''; ui.mpreview = false; ui.rid = null; render(); }
+  else if (a === 'ctab') { ui.ctab = b.dataset.v; ui.crid = null; ui.rpick = []; render(); }
   else if (a === 'recharge') openRecharge(id);
   else if (a === 'use') { ui.tab = 'caja'; ui.pmode = 'tarjeta'; ui.pclient = id; render(); }
   else if (a === 'detail') openDetail(id);
@@ -1155,8 +1381,8 @@ document.addEventListener('click', e => {
     });
   }
   else if (a === 'lcpick') {
-    const c = client(id), f = $('form[data-form=laynew]'); if (!c || !f) return;
-    f.elements.cid.value = id; $('#lcsel').innerHTML = lcSel(c); $('#lcsel').hidden = false; $('#lcbox').hidden = true; updCardHint();
+    const c = client(id), f = b.closest('form'); if (!c || !f) return;
+    f.elements.cid.value = id; $('#lcsel').innerHTML = lcSel(c, f.hasAttribute('data-plain')); $('#lcsel').hidden = false; $('#lcbox').hidden = true; if (f.dataset.form === 'laynew') updCardHint();
   }
   else if (a === 'lcchange') { $('#lcbox').hidden = false; $('#lcsel').hidden = true; const i = $('[data-lcsearch]'); if (i) i.focus(); }
   else if (a === 'laydeliver') {
@@ -1225,6 +1451,77 @@ document.addEventListener('click', e => {
       render(); openLayDetail(id);
     });
   }
+  /* rifas */
+  else if (a === 'rnew') openRifaForm();
+  else if (a === 'redit') openRifaForm(id);
+  else if (a === 'ropen') { ui.rid = id; ui.rq = ''; ui.rfree = false; render(); window.scrollTo(0, 0); }
+  else if (a === 'cropen') { ui.crid = id; ui.rpick = []; ui.rq = ''; ui.rfree = false; render(); window.scrollTo(0, 0); }
+  else if (a === 'rback') { ui.rid = null; ui.crid = null; ui.rpick = []; render(); }
+  else if (a === 'rgrant') openRifaGrant(id, b.dataset.cid);
+  else if (a === 'rnumadm') openRifaNum(id, +b.dataset.n);
+  else if (a === 'rclose') {
+    const r = raffleById(id); if (!r) return;
+    if (confirm(r.closed ? '¿Reabrir la rifa? Los clientes podrán volver a elegir números dentro del periodo.' : '¿Cerrar la rifa? Los clientes ya no podrán elegir números.')) run(async () => {
+      const err = await mutate(st => { const x = st.db.raffles.find(y => y.id === id); if (!x) return 'La rifa ya no existe'; x.closed = !x.closed; });
+      if (err) return toast(err); render();
+    });
+  }
+  else if (a === 'rdelete') {
+    const r = raffleById(id); if (!r) return;
+    if (r.picks.length) return toast('Ya hay números elegidos: en lugar de eliminarla, ciérrala');
+    if (confirm('¿Eliminar la rifa "' + r.name + '"? También se borran los cupos asignados.')) run(async () => {
+      const err = await mutate(st => { const x = st.db.raffles.find(y => y.id === id); if (x && x.picks.length) return 'Ya hay números elegidos: ciérrala en lugar de eliminarla'; st.db.raffles = st.db.raffles.filter(y => y.id !== id); });
+      if (err) return toast(err); ui.rid = null; render(); toast('Rifa eliminada');
+    });
+  }
+  else if (a === 'rrelease') {
+    const r = raffleById(id), n = +b.dataset.n; if (!r) return;
+    if (confirm('¿Liberar el número ' + rNum(r, n) + '? El cliente recupera ese cupo.')) run(async () => {
+      const err = await mutate(st => { const x = st.db.raffles.find(y => y.id === id); const i = x ? x.picks.findIndex(p => p.n === n) : -1; if (i < 0) return 'Ese número ya estaba libre'; x.picks.splice(i, 1); });
+      if (err) return toast(err); closeModal(); render(); toast('Número liberado');
+    });
+  }
+  else if (a === 'rwinclear') {
+    if (confirm('¿Quitar el número ganador registrado?')) run(async () => {
+      const err = await mutate(st => { const x = st.db.raffles.find(y => y.id === id); if (!x) return 'La rifa ya no existe'; x.win = null; });
+      if (err) return toast(err); render();
+    });
+  }
+  else if (a === 'rpick') {
+    const r = raffleById(ui.crid); if (!r || raffleState(r) !== 'activa') return;
+    const n = +b.dataset.n, left = rLeft(r, S.me.cid), i = ui.rpick.indexOf(n);
+    if (i >= 0) ui.rpick.splice(i, 1);
+    else { if (rOwner(r, n)) return; if (ui.rpick.length >= left) return toast('Solo puedes elegir ' + left + (left === 1 ? ' número' : ' números')); ui.rpick.push(n); }
+    updPick(r);
+  }
+  else if (a === 'rclear') { const r = raffleById(ui.crid); ui.rpick = []; if (r) updPick(r); }
+  else if (a === 'rrandom') {
+    const r = raffleById(ui.crid); if (!r || raffleState(r) !== 'activa') return;
+    const left = rLeft(r, S.me.cid), free = [];
+    for (let n = 0; n < r.size; n++) if (!rOwner(r, n)) free.push(n);
+    const k = Math.min(left, free.length);
+    for (let i = 0; i < k; i++) { const j = i + crypto.getRandomValues(new Uint32Array(1))[0] % (free.length - i); [free[i], free[j]] = [free[j], free[i]]; }
+    ui.rpick = free.slice(0, k); render();
+  }
+  else if (a === 'rconfirm') {
+    const r = raffleById(ui.crid); if (!r || !ui.rpick.length) return;
+    const nums = [...ui.rpick].sort((x, y) => x - y), rid = r.id, cid = S.me.cid;
+    if (confirm('¿Confirmar ' + (nums.length === 1 ? 'el número ' : 'los números ') + nums.map(n => rNum(r, n)).join(', ') + '? Una vez confirmados no podrás cambiarlos.')) run(async () => {
+      const err = await mutate(st => {
+        const x = st.db.raffles.find(y => y.id === rid); if (!x) return 'La rifa ya no existe';
+        if (raffleState(x) !== 'activa') return 'La elección de números no está abierta para esta rifa';
+        const left = rGrant(x, cid) - rPicksOf(x, cid).length;
+        if (nums.length > left) return 'Solo tienes ' + Math.max(0, left) + ' cupo(s) disponible(s)';
+        for (const n of nums) {
+          if (!Number.isInteger(n) || n < 0 || n >= x.size) return 'Número inválido';
+          if (rOwner(x, n)) return 'El número ' + rNum(x, n) + ' ya fue elegido por otra persona. Elige otro.';
+        }
+        const now = Date.now(); nums.forEach(n => x.picks.push({n, clientId:cid, created:now}));
+      });
+      if (err) { render(); return toast(err); }
+      ui.rpick = []; render(); toast('¡Números reservados! Mucha suerte 🍀');
+    });
+  }
   else if (a === 'ticket') openTicket(id);
   else if (a === 'print') window.print();
   else if (a === 'amt') { const i = $('input[name=amount]'); if (i) i.value = b.dataset.v; }
@@ -1260,9 +1557,10 @@ document.addEventListener('click', e => {
   else if (a === 'delclient') {
     const c = client(id); if (!c) return;
     if (S.db.layaways.some(l => l.clientId === id && l.status === 'activo')) return toast('Tiene apartados activos: entrégalos o cancélalos antes de eliminarlo');
+    if (S.db.raffles.some(r => ['activa', 'programada'].includes(raffleState(r)) && r.picks.some(p => p.clientId === id))) return toast('Tiene números en una rifa vigente: libéralos antes de eliminarlo');
     if (confirm(`¿Eliminar a ${c.name}? Se borrarán también sus movimientos y apartados.`)) run(async () => {
       const idh = await userHash(c.user);
-      const err = await mutate(st => { delete st.users[idh]; st.db.clients = st.db.clients.filter(x => x.id !== id); st.db.tx = st.db.tx.filter(t => t.clientId !== id); st.db.layaways = st.db.layaways.filter(l => l.clientId !== id); });
+      const err = await mutate(st => { delete st.users[idh]; st.db.clients = st.db.clients.filter(x => x.id !== id); st.db.tx = st.db.tx.filter(t => t.clientId !== id); st.db.layaways = st.db.layaways.filter(l => l.clientId !== id); st.db.raffles.forEach(r => { r.grants = r.grants.filter(g => g.clientId !== id); r.picks = r.picks.filter(p => p.clientId !== id); }); });
       if (err) return toast(err); render();
     });
   }
@@ -1285,7 +1583,8 @@ document.addEventListener('input', e => {
   else if (t.matches('[data-lsearch]')) { ui.lq = t.value; render(); refocus('[data-lsearch]'); }
   else if (t.matches('[data-psearch]')) { ui.pq = t.value; render(); refocus('[data-psearch]'); }
   else if (t.matches('[data-pcsearch]')) { ui.pcq = t.value; render(); refocus('[data-pcsearch]'); }
-  else if (t.matches('[data-lcsearch]')) { const l = $('#lclist'); if (l) l.innerHTML = lcList(t.value); }
+  else if (t.matches('[data-rsearch]')) rFilter();
+  else if (t.matches('[data-lcsearch]')) { const l = $('#lclist'); if (l) l.innerHTML = lcList(t.value, !!(t.form && t.form.hasAttribute('data-plain'))); }
   else if (t.classList.contains('qty') || (t.name === 'amount' && t.form && t.form.dataset.form === 'laynew')) updLay();
   else if (t.id === 'recv') { ui.precv = t.value; const c = $('#chg'); if (c) c.innerHTML = changeText(cashDue()); }
   else if (t.id === 'pnote') ui.pnote = t.value;
@@ -1297,6 +1596,7 @@ document.addEventListener('change', e => {
   if (t.matches('[data-tfilter]')) { ui.tfilter = t.value; render(); }
   if (t.matches('[data-csort]')) { ui.csort = t.value; render(); }
   if (t.matches('[data-lfilter]')) { ui.lfilter = t.value; render(); }
+  if (t.matches('[data-rfree]')) rFilter();
   if (t.name === 'method') {
     const tr = t.value === 'transferencia', tj = t.value === 'tarjeta', h = $('#payhint');
     $('#refbox').hidden = !tr; h.textContent = tj ? (h.dataset.card || '') : tr ? S.db.settings.bank : S.db.settings.cash;

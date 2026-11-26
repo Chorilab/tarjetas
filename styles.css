@@ -182,4 +182,20 @@ body.busy::after{content:"Procesando…";position:fixed;inset:0;background:rgba(
 .lay.done{opacity:.75}
 .sticky-foot{position:sticky;bottom:-20px;z-index:2;background:#fff;border-top:1px solid var(--line);margin-top:12px;padding:10px 0 22px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;box-shadow:0 -6px 10px -8px rgba(0,0,0,.25)}
 .radio label:has(input:disabled){opacity:.5;cursor:not-allowed}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px;margin-top:10px}
+.rgrid.big{grid-template-columns:repeat(auto-fill,minmax(84px,1fr))}
+.rn{font:inherit;font-weight:700;font-variant-numeric:tabular-nums;border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 0;cursor:pointer;color:var(--ink)}
+.rn:hover:not(:disabled){border-color:var(--celeste)}
+.rn:disabled{cursor:not-allowed}
+.rn:disabled:not(.taken):not(.mine):not(.occ){opacity:.5}
+.rn.taken{background:#eee;color:#aaa;text-decoration:line-through}
+.rn.mine{background:var(--ok);color:#fff;border-color:var(--ok)}
+.rn.sel{background:var(--celeste-d);color:#fff;border-color:var(--celeste-d)}
+.rn.occ{background:var(--gold);color:#222;border-color:#d9a000}
+.rn[hidden]{display:none}
+.rules{white-space:pre-wrap;background:#fcfbf7;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
+.rbar{position:sticky;bottom:0;z-index:2;background:#fff;border-top:1px solid var(--line);margin:12px -16px -16px;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-radius:0 0 var(--r) var(--r);box-shadow:0 -6px 10px -8px rgba(0,0,0,.25)}
+.nchips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.nchip{background:var(--ok);color:#fff;border-radius:8px;padding:2px 8px;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+summary{cursor:pointer;font-weight:600;font-size:14px}
 @media print{body>*:not(#modal){display:none!important}.ov{position:static;background:none;padding:0;display:block}.md{box-shadow:none;max-width:100%;padding:0}.x,.noprint{display:none!important}}
